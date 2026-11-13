@@ -1,0 +1,7 @@
+[edge_compute]
+func_id = "5d976a49-dfcc-4c22-832e-461ebd495e38"
+func_name = "mcp-server"
+
+# For environment variables and secrets:
+# Use telnyx-edge secrets add <name> <value>
+# Secrets are injected as environment variables into all your functions
