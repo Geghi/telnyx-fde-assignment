@@ -6,16 +6,16 @@ No PR in this repo — merge directly to `main` — but the same proof goes in t
 
 ## How to start and test
 
-- Local start: edge functions are deployed via `telnyx-edge ship`, not run locally. MCP server: `uv run python -m src` (adjust to the actual entry point).
-- Unit: `pytest` (Python packages) / `npm test` (edge functions)
-- Integration: `pytest -m integration` (if configured) against the deployed Edge Function URL and MCP server running
+- Local start: edge functions are deployed via `telnyx-edge ship`, not run locally. MCP server: same.
+- Unit: `npm test` (in each package)
+- Integration: `npm test -- --grep integration` against the deployed Edge Function URL and MCP server running
 - E2E: calling the live assistant phone number — never automatic; run manually and attach the recording
 
 ## How much to test — the three levels
 
 ### Level 0 — one line, test, config
 
-The name of the red→green test and what it verifies, in one line.
+The name of the red->green test and what it verifies, in one line.
 
 ### Level 1 — logic or endpoint
 
@@ -33,7 +33,7 @@ attached to the report.
   A capture without context is not evidence.
 - Coverage: every behaviour the claim says is visible or audible has its own
   capture, including what should stay the same (the default path).
-  A behaviour covered only by a test → add the capture.
+  A behaviour covered only by a test -> add the capture.
 
 ## In the report
 

@@ -2,7 +2,7 @@
 
 ## Setup remaining
 
-- [ ] `pip install pre-commit complexipy && pre-commit install` — install pre-commit hooks (sync-deps + complexipy failed-report gate)
-- [ ] Add `complexipy` to `.pre-commit-config.yaml` as a pre-commit hook: `complexipy -f .`
-- [ ] Create `pyproject.toml` in `assistant-voice-agent/` with ruff + mypy config once code starts
-- [ ] Create `package.json` + tsconfig in `edge-functions/` once the first function is scaffolded
+- [ ] `npm install -D complexipy` in each edge function package + add to `.pre-commit-config.yaml` as `complexipy -f .`
+- [ ] `pre-commit install` — install pre-commit hooks (sync-deps + complexipy)
+- [ ] `telnyx-edge auth login` — authenticate the CLI with your Telnyx account
+- [ ] Scaffold edge function packages with `telnyx-edge new-func` once we start building

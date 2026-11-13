@@ -20,12 +20,17 @@ How to work in this repo. Linked from [CLAUDE.md](../../CLAUDE.md).
 ## Layout
 
 ```
-edge-functions/             # Telnyx Edge Functions (webhook, dynamic variables)
-  <fn>/src/                 # handler code
-  <fn>/tests/               # unit tests (mocked bindings)
-assistant-voice-agent/      # MCP server + assistant tool definitions
-  src/
-  tests/
+edge-functions/
+  webhook/                  # TypeScript — dynamic webhook variables + KV + Actor
+    src/                    # handler code + CallSession actor
+    tests/                  # unit tests (mocked bindings)
+  mcp-server/               # TypeScript — MCP server with scheduling tools
+    src/                    # tool implementations + in-memory store
+    tests/                  # unit + integration tests
+assistant-voice-agent/      # assistant configuration (not code — JSON + prompts)
+  workflow.json             # conversation workflow definition (API payload)
+  prompts/                  # system prompt per node
+  setup.ts                  # script to create assistant + assign phone via API
 docs/                       # documentation
   adr/                      # architecture decision records (lazy)
   prd/                      # product requirement docs (lazy)

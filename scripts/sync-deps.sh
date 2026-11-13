@@ -10,5 +10,5 @@ sync() {
   "$@"
   echo "$new" > "$stamp"
 }
-sync edge-functions/package-lock.json npm ci --prefix edge-functions
-sync assistant-voice-agent/uv.lock uv sync --directory assistant-voice-agent
+sync edge-functions/webhook/package-lock.json npm ci --prefix edge-functions/webhook
+sync edge-functions/mcp-server/package-lock.json npm ci --prefix edge-functions/mcp-server

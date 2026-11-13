@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-AI Assistant & edge compute solution for the Telnyx FDE coding challenge: Voice AI assistant with conversation workflow, MCP server, Edge Functions, KV, and Stateful Actors — monorepo with Python (MCP server / assistant tools) and TypeScript (edge functions). `AGENTS.md` points here.
+AI Voice receptionist for Bright Smile Dental — Telnyx FDE coding challenge. Conversation workflow, MCP server, Edge Functions, KV, Stateful Actors. All TypeScript, all on Telnyx Edge Compute. `AGENTS.md` points here.
 
 ## Rules
 
@@ -28,15 +28,15 @@ AI Assistant & edge compute solution for the Telnyx FDE coding challenge: Voice 
 ## Commands
 
 ```bash
-# Python (MCP server / assistant tools)
-uv sync                          # install
-ruff check .                     # lint (fix: ruff check . --fix)
-mypy .                           # typecheck
-pytest                           # tests
+# Install (per package — run from each package dir)
+npm install
 
-# Edge functions (TypeScript)
-npm install --prefix edge-functions
-npm test --prefix edge-functions
+# Lint + typecheck
+npx eslint .                     # lint (fix: npx eslint . --fix)
+npx tsc --noEmit                 # typecheck
+
+# Tests
+npm test
 
 # Deploy edge functions
 telnyx-edge ship                 # from edge-functions/<fn>/

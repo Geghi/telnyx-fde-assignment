@@ -2,10 +2,10 @@
 
 ## Layers
 
-| Layer       | Command                          | Needs                                  |
-| ----------- | -------------------------------- | -------------------------------------- |
-| Unit        | `pytest` (Python) / `npm test` (edge functions) | nothing |
-| Integration | `pytest -m integration` — against the deployed function, **skipped in `/ship`** | deployed Edge Function URL, MCP server running |
+| Layer       | Command  | Needs                                  |
+| ----------- | -------- | -------------------------------------- |
+| Unit        | `npm test` | nothing |
+| Integration | `npm test -- --grep integration` — against a deployed function URL, **skipped in `/ship`** | deployed Edge Function URL, MCP server running |
 
 Test files that call live Telnyx APIs, real phone numbers, or the production
 assistant are never run by `/ship`. Run them manually.
@@ -14,12 +14,14 @@ assistant are never run by `/ship`. Run them manually.
 
 ```
 edge-functions/
-  <fn-name>/
-    src/         # handler code
-    tests/       # unit tests for the handler (mocked Request / KV binding)
+  webhook/
+    src/              # handler code
+    tests/            # unit tests (mocked Request / KV / Actor)
+  mcp-server/
+    src/              # MCP server and tool implementations
+    tests/            # unit + integration tests
 assistant-voice-agent/
-  src/           # MCP server and assistant tools
-  tests/         # unit + integration tests
+  tests/             # tests for the setup script
 ```
 
 Shared fixtures and helpers go in the closest `tests/` to the code under test.
