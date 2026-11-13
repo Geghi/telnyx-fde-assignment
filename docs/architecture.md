@@ -86,12 +86,35 @@ A directed graph of 6 nodes connected by conditional edges.
 | Receptionist  | Escalation    | LLM condition      | caller requests human or has emergency  |
 | Receptionist  | Receptionist  | default (stay)     | caller asks FAQ — answer with tools     |
 | Booking       | Confirmation  | default            | booking or callback request completed  |
+| Booking       | Receptionist  | LLM condition      | caller wants to abandon booking         |
 | Cancellation  | Confirmation  | default            | cancellation completed                  |
+| Cancellation  | Receptionist  | LLM condition      | caller wants to abandon cancellation    |
 | Confirmation  | Receptionist  | default (loop)     | "Is there anything else I can help with?"|
 | Escalation    | (terminal)    | —                  | call transferred via Call Control API  |
 
-Stretch goal: Receptionist → Escalation via variable comparison
-(`telnyx_conversation_duration_secs >= 300`).
+Stretch goals:
+- Receptionist → Escalation via variable comparison (`telnyx_conversation_duration_secs >= 300`).
+- Receptionist → Escalation via variable comparison (`transitions_this_call >= 10`) —
+  hard guard against infinite ping-pong from LLM misclassification.
+
+#### Loop prevention
+
+The graph allows back-edges (Booking → Receptionist, Cancellation → Receptionist),
+which is correct when the caller changes their mind. Three layers prevent the
+bad kind of loop (Receptionist → Booking → Receptionist → Booking from
+misclassification):
+
+1. **`previous_intent` dynamic variable** — the webhook returns the Actor's
+   `currentIntent` so Receptionist knows "I just came back from Booking, the
+   caller abandoned." The system prompt says: "if you just returned from a task
+   and the caller has no new intent, ask 'is there anything else?' — don't
+   reclassify."
+2. **Prompt guardrails** — the Receptionist prompt explicitly says not to route
+   to Booking unless the caller clearly asks to book. "Never mind" → stay in
+   Receptionist and ask what else they need.
+3. **Hard guard (stretch)** — a variable comparison edge using a transition
+   counter from the Actor: if `transitions_this_call >= 10`, route to Escalation
+   (something is wrong, hand to human).
 
 #### Node prompts (system prompt outlines)
 
@@ -181,6 +204,8 @@ URL: `https://webhook-<org>.telnyxcompute.com`
 | `online_booking_enabled` | KV flag  | Booking node logic     |
 | `clinic_hours`           | KV cache | Receptionist FAQ       |
 | `current_intent`         | Actor    | Receptionist context   |
+| `previous_intent`        | Actor    | Receptionist loop prevention (knows what caller just abandoned) |
+| `transitions_this_call`  | Actor    | Hard loop guard (route to Escalation if >= 10) |
 
 ### 4. MCP Server (Python, edge function)
 
@@ -221,9 +246,11 @@ One actor per caller, keyed by `caller:+{phone}`.
 |-------------------|--------|---------------------------------------------|
 | `callerName`      | string | Name if previously provided                 |
 | `currentIntent`   | string | What the caller is doing this call          |
+| `previousIntent`  | string | What the caller was doing before the current node (for loop prevention) |
 | `bookingDetails`   | object | Partial booking (reason, date, slot)       |
 | `lastBookingId`   | string | Booking ID if a booking was made            |
 | `callStartTime`   | number | Timestamp for duration tracking             |
+| `transitionsThisCall` | number | Count of node transitions this call (hard loop guard) |
 
 **Read-modify-write:** each webhook call reads the session, updates it
 with the current node's data, and writes it back.
