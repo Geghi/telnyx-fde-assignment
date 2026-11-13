@@ -1,8 +1,8 @@
 import * as http from "node:http";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { Store } from "./src/store.js";
-import { createMcpServer } from "./src/tools.js";
+import { Store } from "./src/store/index.js";
+import { createMcpServer } from "./src/tools/index.js";
 
 const store = new Store();
 

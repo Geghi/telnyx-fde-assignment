@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { Store } from "./store.js";
-import type { Slot } from "./store.js";
+import { Store } from "../store/index.js";
+import type { Slot } from "../store/index.js";
 
 export function createMcpServer(store: Store): McpServer {
   const server = new McpServer(

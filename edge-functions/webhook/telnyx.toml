@@ -1,0 +1,17 @@
+name = "webhook"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[actors]]
+binding = "CALL_SESSION"
+type = "CallSession"
+
+[storage.kv.CLINIC_KV]
+# id = "<kv-namespace-uuid>"  # fill after: telnyx-edge storage kv create --name clinic-kv
+
+[telnyx]
+binding = "TELNYX"
+
+[edge_compute]
+func_id = "03381a02-a5a7-4e6b-a224-f5aa613d3332"
+func_name = "webhook"
