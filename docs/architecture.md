@@ -24,30 +24,92 @@ After each task, the caller can ask for something else (loop back to the recepti
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │            Conversation Workflow                     │    │
 │  │  Greeting (speak) → Receptionist (prompt)            │    │
-│  │      ├── Booking (prompt) ──→ Confirmation (speak)  │    │
+│  │      ├── Booking (prompt) ──→ Confirmation (speak)   │    │
 │  │      ├── Cancellation (prompt) ──→ Confirmation      │    │
-│  │      └── Escalation (speak)                          │    │
+│  │      └── Escalation (speak) → Transfer (tool node)   │    │
 │  │  Confirmation loops back to Receptionist             │    │
 │  └─────────────────────────────────────────────────────┘    │
-│       │ dynamic vars        │ MCP tool calls                 │
-└───────┼──────────────────────┼────────────────────────────────┘
-        │                      │
-        ▼                      ▼
-┌───────────────────┐  ┌──────────────────────┐
-│  Edge Function    │  │  MCP Server          │
-│  (TypeScript)     │  │  (Python, edge)      │
-│  webhook handler   │  │                      │
-│                   │  │  Tools:              │
-│  ┌─────┐ ┌──────┐│  │  check_availability  │
-│  │ KV  │ │Actor ││  │  book_appointment    │
-│  │     │ │      ││  │  cancel_appointment │
-│  └─────┘ └──────┘│  │  get_services       │
-│                   │  │  get_business_info  │
-│  structured logs  │  │                      │
-│  KV counters      │  │  in-memory data      │
-└───────────────────┘  └──────────────────────┘
+│       │ dynamic vars (once, at call start) │ MCP tool calls   │
+└───────┼────────────────────────────────────┼──────────────────┘
+        │                                    │
+        ▼                                    ▼
+┌───────────────────┐                ┌──────────────────────┐
+│  Edge Function    │                │  MCP Server          │
+│  (TypeScript)     │                │  (TypeScript, edge)  │
+│  webhook handler   │                │                      │
+│                   │                │  Tools:              │
+│  ┌─────┐ ┌──────┐│                │  update_booking_draft│
+│  │ KV  │ │Actor ││                │  get_booking_status  │
+│  │     │ │      ││                │  check_availability  │
+│  └─────┘ └──────┘│                │  book_appointment    │
+│                   │                │  cancel_appointment  │
+│  structured logs  │                │  get_services        │
+│  KV counters      │                │  get_business_info   │
+└───────────────────┘                │                      │
+                                     │  in-memory data      │
+                                     └──────────────────────┘
         All on Telnyx Edge Compute
 ```
+
+## Documentation findings (from Telnyx docs)
+
+### Webhook timing — fires ONCE per voice call
+
+The dynamic variables webhook (`assistant.initialization` event) fires **at the start
+of a voice call**, not on every node transition. The dynamic variables set at
+initialization persist for the entire call. Webhook timeout: 1.5s default, up to 10s
+via `dynamic_variables_webhook_timeout_ms`.
+
+Payload Telnyx sends:
+```json
+{
+  "data": {
+    "event_type": "assistant.initialization",
+    "payload": {
+      "telnyx_conversation_channel": "phone_call",
+      "telnyx_agent_target": "+13128675309",
+      "telnyx_end_user_target": "+15551234567",
+      "call_control_id": "v3:u5OAKGEPT3Dx8SZSSDRWEMdNH2OripQhO",
+      "assistant_id": "assistant_..."
+    }
+  }
+}
+```
+
+Expected response:
+```json
+{
+  "dynamic_variables": {
+    "caller_name": "John",
+    "caller_phone": "+15551234567",
+    "online_booking_enabled": "true",
+    "clinic_hours": "Mon-Fri 8am-6pm"
+  }
+}
+```
+
+### Workflow nodes — three types
+
+- **Prompt node** — LLM-driven step with its own instructions and scoped tools. Routes via LLM-condition or variable-comparison edges. No default edges.
+- **Speak node** — verbatim scripted message, no LLM turn. Must have **exactly one** default edge to the next node.
+- **Tool node** — runs a single shared tool deterministically, no LLM turn. Optional `message` field plays a filler before the tool runs. Routes on `telnyx_last_tool_status_code` via variable comparison. Can be terminal (no edges — hangup/transfer).
+
+### KV binding — TypeScript env
+
+`env.MY_KV.get(key)`, `env.MY_KV.put(key, value)`, `env.MY_KV.delete(key)`, `env.MY_KV.list()`.
+`get<T>(key, { type: "json" })` for JSON values. `put(key, val, { expirationTtl: seconds })`.
+Declared in `func.toml` as `[storage.kv.MY_KV]` with namespace UUID. TypeScript-only env binding.
+
+### Stateful Actor — umbrella manifest
+
+Actors require `telnyx.toml` (not `func.toml`). Class extends `StatefulActor`,
+state via `this.ctx.storage.get/put`. Caller routes via `env.BINDING.idFromName(key).method()`.
+Single-threaded, per-key isolation, persistent storage.
+
+### System variables for routing
+
+`telnyx_conversation_duration_secs`, `telnyx_last_tool_status_code`,
+`telnyx_current_time`, `telnyx_conversation_channel`, etc.
 
 ## Components
 
@@ -58,12 +120,12 @@ After each task, the caller can ask for something else (loop back to the recepti
 - **Model:** a conversational LLM (pick from Telnyx-hosted models in the portal).
 - **Language:** English.
 - **Phone number:** assigned via Telnyx portal.
-- **MCP integration:** the MCP server URL is configured on the assistant so
-  prompt nodes can call MCP tools.
+- **MCP server URL:** configured on the assistant so prompt nodes can call MCP tools.
+- **Dynamic variables webhook:** set to the webhook edge function URL.
 
 ### 2. Conversation Workflow
 
-A directed graph of 6 nodes connected by conditional edges.
+A directed graph of 7 nodes connected by conditional edges.
 
 #### Nodes
 
@@ -71,50 +133,45 @@ A directed graph of 6 nodes connected by conditional edges.
 |----|----------------|--------|-------------------------------------------------------|---------------------|
 | 1  | Greeting       | speak  | Compliance disclosure + greeting (verbatim)           | —                   |
 | 2  | Receptionist   | prompt | Identify intent; answer FAQ; route to next node        | get_business_info, get_services |
-| 3  | Booking        | prompt | Multi-turn booking: reason → date → slot → name → book | check_availability, book_appointment |
+| 3  | Booking        | prompt | Multi-turn booking: progressive draft via MCP tools   | update_booking_draft, get_booking_status, check_availability, book_appointment |
 | 4  | Cancellation   | prompt | Multi-turn: find by phone → confirm → cancel          | cancel_appointment  |
 | 5  | Confirmation   | speak  | Verbatim confirmation (booking, cancellation, callback) | —                |
 | 6  | Escalation     | speak  | "Connecting you to our front desk. Please hold."       | —                   |
+| 7  | Transfer       | tool   | Call Control API transfer (terminal if success)        | — (shared tool)     |
 
 #### Edges
 
 | From          | To            | Condition type     | Condition                              |
 |---------------|---------------|--------------------|----------------------------------------|
-| Greeting      | Receptionist  | default            | —                                      |
+| Greeting      | Receptionist  | default            | — (speak node → default required)      |
 | Receptionist  | Booking       | LLM condition      | caller wants to book or reschedule     |
 | Receptionist  | Cancellation  | LLM condition      | caller wants to cancel                 |
 | Receptionist  | Escalation    | LLM condition      | caller requests human or has emergency  |
-| Receptionist  | Receptionist  | default (stay)     | caller asks FAQ — answer with tools     |
-| Booking       | Confirmation  | default            | booking or callback request completed  |
+| Booking       | Confirmation  | LLM condition      | booking or callback request completed  |
 | Booking       | Receptionist  | LLM condition      | caller wants to abandon booking         |
-| Cancellation  | Confirmation  | default            | cancellation completed                  |
+| Cancellation  | Confirmation  | LLM condition      | cancellation completed                  |
 | Cancellation  | Receptionist  | LLM condition      | caller wants to abandon cancellation    |
-| Confirmation  | Receptionist  | default (loop)     | "Is there anything else I can help with?"|
-| Escalation    | (terminal)    | —                  | call transferred via Call Control API  |
+| Confirmation  | Receptionist  | default            | "Is there anything else?" (speak → default) |
+| Escalation    | Transfer      | default            | — (speak node → default required)      |
+| Transfer      | Receptionist  | default            | if transfer fails (fallback)           |
 
-Stretch goals:
-- Receptionist → Escalation via variable comparison (`telnyx_conversation_duration_secs >= 300`).
-- Receptionist → Escalation via variable comparison (`transitions_this_call >= 10`) —
-  hard guard against infinite ping-pong from LLM misclassification.
+Stretch: Receptionist → Escalation via variable comparison
+(`telnyx_conversation_duration_secs >= 300`).
+
+#### How prompt nodes route
+
+A prompt node does NOT have a default edge — the conversation stays on the
+node if no LLM/variable edge fires. LLM-condition edges are offered to the model
+as `transition__<edge_id>` tools. The model selects one to move, or replies
+without one to stay.
 
 #### Loop prevention
 
-The graph allows back-edges (Booking → Receptionist, Cancellation → Receptionist),
-which is correct when the caller changes their mind. Three layers prevent the
-bad kind of loop (Receptionist → Booking → Receptionist → Booking from
-misclassification):
-
-1. **`previous_intent` dynamic variable** — the webhook returns the Actor's
-   `currentIntent` so Receptionist knows "I just came back from Booking, the
-   caller abandoned." The system prompt says: "if you just returned from a task
-   and the caller has no new intent, ask 'is there anything else?' — don't
-   reclassify."
-2. **Prompt guardrails** — the Receptionist prompt explicitly says not to route
-   to Booking unless the caller clearly asks to book. "Never mind" → stay in
-   Receptionist and ask what else they need.
-3. **Hard guard (stretch)** — a variable comparison edge using a transition
-   counter from the Actor: if `transitions_this_call >= 10`, route to Escalation
-   (something is wrong, hand to human).
+Since the webhook fires once, per-call transition tracking is unavailable.
+Loop prevention is now purely prompt-based + system variables:
+1. **Prompt guardrails** — Receptionist prompt: "don't re-route to a task the caller just abandoned; ask 'is there anything else?'"
+2. **System variable** — `telnyx_conversation_duration_secs >= 300` → Escalation (stretch).
+3. **LLM edge conditions are explicit** — no vague triggers; edges fire only on clear intent.
 
 #### Node prompts (system prompt outlines)
 
@@ -124,43 +181,48 @@ Thank you for calling Bright Smile Dental. This call may be recorded
 for quality and training purposes. How can I help you today?
 ```
 
-**Receptionist (prompt node):**
+**Receptionist (prompt node, instructions_mode: append):**
 ```
 You are Sarah, the virtual receptionist at Bright Smile Dental.
 Your job: identify what the caller needs and use the right tool.
 If the caller asks about services, hours, or location, use get_business_info
-or get_services to answer.
-If the caller wants to book or reschedule an appointment, say so briefly
-and the workflow will route you.
-If the caller wants to cancel, say so briefly and the workflow will route you.
+or get_services to answer — don't route to another node for FAQ.
+If the caller wants to book or reschedule, say so briefly and the workflow
+will route you. If the caller wants to cancel, say so briefly.
 If the caller has a dental emergency or asks for a human, say so briefly.
-Be warm, concise, and professional. Never make up information — check with tools.
+Never make up information — check with tools.
+Always tell the caller what you're doing before calling a tool
+("Let me check our calendar for you...") and what the result means after.
+When a caller returns from an abandoned task and has no new intent,
+ask "Is there anything else I can help you with?" — don't re-route them.
 ```
 
-**Booking (prompt node):**
+**Booking (prompt node, instructions_mode: append):**
 ```
 You are Sarah, helping the caller book a dental appointment.
-Steps (you manage the turns):
-1. Ask the reason for the visit and their preferred date.
-   If no preferred date, search from today.
-2. Call check_availability to find open slots.
-3. Present the first available slot (or offer alternatives if asked).
-4. Once the caller confirms a slot, ask for their name.
-5. Call book_appointment with the details.
-If online_booking_enabled is false, explain that the request has been noted
-and our staff will confirm the appointment as soon as possible.
-Be concise. Confirm details before booking. Never make up slot times.
+Use the draft tools to save each piece of information as you collect it.
+Every save returns a status telling you the next step — follow it.
+Call get_booking_status first to see if a draft already exists.
+Collect in order: reason → preferred date → slot → name.
+If no preferred date, search from today.
+Call check_availability once you have a date, present the first slot.
+When the caller confirms a slot, save it and ask for name.
+Call book_appointment only when status says all fields are filled.
+The caller can correct any field — call update_booking_draft again.
+If online_booking_enabled is false, explain the request is noted
+and staff will confirm as soon as possible.
+Always tell the caller what you're doing before calling a tool.
+Never make up slot times. Follow the status from each tool call.
 ```
 
-**Cancellation (prompt node):**
+**Cancellation (prompt node, instructions_mode: append):**
 ```
 You are Sarah, helping the caller cancel or reschedule an appointment.
-Steps:
-1. Confirm the caller's phone number (from the dynamic variable caller_phone).
-2. Call cancel_appointment to find and cancel their appointment.
-3. Confirm what was cancelled.
+Steps: confirm the caller's phone number (from caller_phone variable),
+call cancel_appointment, confirm what was cancelled.
 If rescheduling, guide them to book a new appointment.
 Be concise and confirm before cancelling.
+Always tell the caller what you're doing before calling a tool.
 ```
 
 **Confirmation (speak node):**
@@ -178,107 +240,150 @@ Is there anything else I can help you with?"
 I'm connecting you with our front desk team. Please hold.
 ```
 
+**Transfer (tool node):**
+```
+message: "One moment while I connect you." (optional — already spoken by Escalation node)
+shared_tool_id: <Transfer tool — Call Control API transfer to front desk number>
+```
+
 ### 3. Webhook Edge Function (TypeScript)
 
 Deployed on Telnyx Edge Compute via `telnyx-edge ship`.
 URL: `https://webhook-<org>.telnyxcompute.com`
 
 **Responsibilities:**
-- Receive webhook calls before each node transition.
-- Read/update the `CallSession` Stateful Actor (per-caller state).
+- Receive ONE webhook call at the start of each voice call (`assistant.initialization`).
+- Read the `CallSession` Stateful Actor for returning-caller personalization.
 - Read KV (feature flags, cached clinic hours, counters).
-- Return dynamic variables to the workflow.
-- Structured JSON log on every call (caller, node, outcome, latency).
-- On Escalation node entry: call Telnyx Call Control API to transfer the call.
+- Increment KV counters (calls per caller — observability signal).
+- Return dynamic variables to the workflow (persists for the whole call).
+- Structured JSON log on every webhook call.
+- Expose a `/metrics` endpoint to read KV counters for observability.
 
-**Bindings (in `func.toml`):**
-- `KV` — `env.KV` (TypeScript env binding)
-- `Actor` — `CallSession` class via `StatefulActor`
+**Manifest:** `telnyx.toml` (umbrella — required for actors).
 
-**Dynamic variables returned:**
+**Bindings:**
+- `[storage.kv.CLINIC_KV]` — `env.CLINIC_KV` (KV namespace)
+- `[[actors]]` binding `CALL_SESSION` → `CallSession` class
+- `[telnyx]` binding — pre-authenticated Telnyx SDK (for Call Control API)
 
-| Variable                 | Source   | Used by                |
-|--------------------------|----------|------------------------|
-| `caller_name`            | Actor    | Greeting personalization|
-| `caller_phone`           | webhook  | MCP tool calls         |
-| `online_booking_enabled` | KV flag  | Booking node logic     |
-| `clinic_hours`           | KV cache | Receptionist FAQ       |
-| `current_intent`         | Actor    | Receptionist context   |
-| `previous_intent`        | Actor    | Receptionist loop prevention (knows what caller just abandoned) |
-| `transitions_this_call`  | Actor    | Hard loop guard (route to Escalation if >= 10) |
+**Webhook payload** (from Telnyx):
+```json
+{
+  "data": {
+    "event_type": "assistant.initialization",
+    "payload": {
+      "telnyx_end_user_target": "+15551234567",
+      "call_control_id": "v3:...",
+      "assistant_id": "assistant_..."
+    }
+  }
+}
+```
 
-### 4. MCP Server (Python, edge function)
+**Response** (dynamic variables, set once for the call):
+```json
+{
+  "dynamic_variables": {
+    "caller_name": "John",
+    "caller_phone": "+15551234567",
+    "online_booking_enabled": "true",
+    "clinic_hours": "Mon-Fri 8am-6pm, Sat 9am-2pm"
+  }
+}
+```
+
+### 4. MCP Server (TypeScript, edge function)
 
 Deployed on Telnyx Edge Compute via `telnyx-edge ship`.
 URL: `https://mcp-server-<org>.telnyxcompute.com`
 
-**Transport:** MCP over HTTP (JSON-RPC POST requests).
+**Language:** TypeScript using `@modelcontextprotocol/sdk`.
 
-**Tools (5):**
+**Transport:** MCP over HTTP (Streamable HTTP transport).
 
-| Tool                 | Args                              | Returns                          | Used in        |
-|----------------------|-----------------------------------|----------------------------------|----------------|
-| `check_availability` | `date_from`, `date_to?`           | List of available slots         | Booking        |
-| `book_appointment`   | `name`, `phone`, `slot`, `reason` | Booking confirmation             | Booking        |
-| `cancel_appointment` | `phone`, `booking_id?`            | Cancellation confirmation        | Cancellation   |
-| `get_services`       | —                                 | Services with prices/descriptions| Receptionist   |
-| `get_business_info`  | —                                 | Hours, location, policies        | Receptionist   |
+**Tools (7):**
 
-**Data store:** in-memory dict of appointments (resets on cold start — fine for demo).
+| Tool                   | Args                              | Returns                              | Used in        |
+|------------------------|-----------------------------------|--------------------------------------|----------------|
+| `update_booking_draft` | `field`, `value`                  | `{ draft, status: { next_step, missing_fields } }` | Booking |
+| `get_booking_status`   | —                                 | `{ draft, status }`                  | Booking        |
+| `check_availability`    | `date_from`, `date_to?`           | List of available slots              | Booking        |
+| `book_appointment`     | (reads draft by caller_phone)     | `{ booking_id, date, time, dentist, confirmed }` | Booking |
+| `cancel_appointment`   | `phone`, `booking_id?`            | `{ cancelled: true, date }`          | Cancellation   |
+| `get_services`         | —                                 | Services with prices/descriptions    | Receptionist   |
+| `get_business_info`    | —                                 | Hours, location, policies            | Receptionist   |
+
+**Booking draft status flow:**
+```
+update_booking_draft("reason", value)
+  → status: { next_step: "ask_preferred_date", missing: ["preferred_date", "slot", "name"] }
+update_booking_draft("preferred_date", value)
+  → status: { next_step: "search_slots", missing: ["slot", "name"] }
+  (LLM calls check_availability here)
+update_booking_draft("slot", value)
+  → status: { next_step: "ask_name", missing: ["name"] }
+update_booking_draft("name", value)
+  → status: { next_step: "book", missing: [] }
+  (LLM calls book_appointment here)
+```
+
+The draft is keyed by `caller_phone` in the MCP server's in-memory store.
+The caller can correct any field at any time — `update_booking_draft` overwrites.
+`get_booking_status` retrieves the current draft and status.
+
+**Data store:** in-memory Map keyed by caller phone (resets on cold start).
 
 ### 5. KV (Key-Value Store)
 
 | Key                      | Value              | Purpose                          |
 |--------------------------|--------------------|----------------------------------|
 | `online_booking_enabled` | `true`/`false`     | Feature flag: book now or note as callback |
-| `clinic_hours`           | JSON hours object  | Cached clinic hours for FAQ      |
+| `clinic_hours`           | JSON hours string  | Cached clinic hours for dynamic vars |
 | `webhook_calls:{caller}` | integer            | Observability: call count per caller |
-| `webhook_errors:{caller}`| integer            | Observability: error count       |
-| `webhook_latency:{node}` | integer (ms)       | Observability: last latency per node |
+| `webhook_errors`         | integer            | Observability: total error count |
 
 ### 6. Stateful Actor — CallSession
 
-One actor per caller, keyed by `caller:+{phone}`.
+One actor per caller, keyed by `caller:+{phone}`. Read once at call start; persisted across calls.
 
 **State fields:**
 
 | Field             | Type   | Purpose                                     |
 |-------------------|--------|---------------------------------------------|
-| `callerName`      | string | Name if previously provided                 |
-| `currentIntent`   | string | What the caller is doing this call          |
-| `previousIntent`  | string | What the caller was doing before the current node (for loop prevention) |
-| `bookingDetails`   | object | Partial booking (reason, date, slot)       |
-| `lastBookingId`   | string | Booking ID if a booking was made            |
-| `callStartTime`   | number | Timestamp for duration tracking             |
-| `transitionsThisCall` | number | Count of node transitions this call (hard loop guard) |
+| `callerName`      | string | Name if previously provided in a booking     |
+| `lastBookingId`   | string | Last booking ID (for returning callers)     |
+| `totalCalls`      | number | Total calls from this number (returning caller) |
 
-**Read-modify-write:** each webhook call reads the session, updates it
-with the current node's data, and writes it back.
-Single-threaded guarantee prevents races on rapid node transitions.
+**Read-modify-write:** the webhook reads the session, increments `totalCalls`,
+sets `callerName` if known, and returns dynamic variables. Persists across calls —
+if the same person calls twice, `totalCalls` is 2 and the greeting says "Welcome back."
 
 ### 7. Observability
 
-**Structured logs (every webhook call):**
+**Structured logs (webhook):**
 ```json
 {
   "timestamp": "ISO-8601",
-  "caller": "+1234567890",
-  "node": "Booking",
-  "intent": "booking",
-  "outcome": "slot_offered",
+  "caller": "+15551234567",
+  "event": "assistant.initialization",
+  "outcome": "ok",
   "latency_ms": 42,
-  "actor_key": "caller:+1234567890"
+  "returning_caller": true,
+  "actor_key": "caller:+15551234567"
 }
 ```
 
-**Signal beyond logs:** KV counters (calls per caller, errors, latency per node).
-Readable via a simple GET endpoint on the edge function.
+**Signal beyond logs:** KV counters (calls per caller, errors — readable via `/metrics` endpoint).
 
 **How you'd know it broke within 1 minute:**
-1. KV `webhook_errors:{caller}` spiking → the webhook is failing for a caller.
-2. Latency counter for a node > 2000ms → the MCP server or KV is slow.
-3. No webhook calls arriving → the assistant isn't hitting the webhook (config wrong).
-4. Telnyx portal call logs → conversation side: node transitions, tool calls, transcripts.
+1. KV `webhook_errors` spiking → the webhook is failing.
+2. No webhook calls arriving → the assistant's webhook URL is misconfigured.
+3. Telnyx portal call logs → conversation side: node transitions, tool calls, transcripts.
+
+**Filler messages on external calls:** the LLM is prompted to always announce what it's doing
+before calling a tool ("Let me check our calendar...") and what the result means after.
+For tool nodes (like Transfer), the optional `message` field serves the same purpose.
 
 ## Folder structure
 
@@ -286,23 +391,23 @@ Readable via a simple GET endpoint on the edge function.
 edge-functions/
   webhook/                     # TypeScript — dynamic webhook variables + KV + Actor
     src/
-      handler.ts               # webhook HTTP handler
-      actor.ts                  # CallSession StatefulActor class
+      index.ts                 # HTTP handler — webhook + /metrics endpoints
+      actor.ts                 # CallSession StatefulActor class
       variables.ts             # dynamic variable assembly
       types.ts
     tests/
-    func.toml                  # KV + Actor bindings
+    telnyx.toml                # umbrella manifest (actors + KV + telnyx bindings)
     package.json
-  mcp-server/                  # Python — MCP server with scheduling tools
+  mcp-server/                  # TypeScript — MCP server with scheduling tools
     src/
-      server.py                # MCP HTTP transport handler
-      tools.py                 # tool implementations
-      data.py                   # in-memory appointment store
+      index.ts                 # MCP HTTP transport server
+      tools.ts                  # tool implementations
+      store.ts                  # in-memory appointment + draft store
     tests/
-    func.toml
-    pyproject.toml
+      func.toml                # standard function manifest (no actors needed)
+    package.json
 assistant-voice-agent/         # assistant configuration
-  workflow.json                # conversation workflow definition (or portal export)
+  workflow.json                # conversation workflow definition (API payload)
   prompts/                     # system prompt per node
     greeting.txt
     receptionist.txt
@@ -310,7 +415,7 @@ assistant-voice-agent/         # assistant configuration
     cancellation.txt
     confirmation.txt
     escalation.txt
-  setup.py                     # script to create assistant + assign phone via API
+  setup.ts                     # script to create assistant + assign phone via API
 docs/
   architecture.md              # this file
   adr/                         # architecture decision records
@@ -320,21 +425,22 @@ docs/
 
 ## Deployment
 
-| Component          | Platform             | Deploy command                    | URL                                |
-|--------------------|-----------------------|-----------------------------------|-------------------------------------|
-| Webhook            | Telnyx Edge Compute  | `telnyx-edge ship` (from webhook/) | `https://webhook-<org>.telnyxcompute.com` |
-| MCP server         | Telnyx Edge Compute  | `telnyx-edge ship` (from mcp-server/) | `https://mcp-server-<org>.telnyxcompute.com` |
-| Assistant + workflow | Telnyx portal/API   | `setup.py` or portal             | phone number assigned               |
-| Phone number       | Telnyx portal        | assign to assistant              | dial-in number                      |
+| Component          | Platform             | Deploy command                    | Manifest        |
+|--------------------|-----------------------|-----------------------------------|-----------------|
+| Webhook            | Telnyx Edge Compute  | `telnyx-edge ship` (from webhook/) | `telnyx.toml` (actors) |
+| MCP server         | Telnyx Edge Compute  | `telnyx-edge ship` (from mcp-server/) | `func.toml` |
+| Assistant + workflow | Telnyx portal/API   | `assistant-voice-agent/setup.ts` | —              |
+| Phone number       | Telnyx portal        | assign to assistant              | —              |
+| KV namespace       | Telnyx CLI           | `telnyx-edge storage kv create`  | UUID in toml    |
 
 All on Telnyx. No external hosting needed.
 
 ## Build order
 
-1. **MCP server** (Python edge function) — scaffold, implement 5 tools, test locally, ship.
-2. **Webhook edge function** (TypeScript) — scaffold, implement Actor + KV + dynamic vars, ship.
-3. **Assistant + workflow** — create in portal (or via API), configure MCP URL, set up webhook URL,
-   build the 6-node workflow, assign phone number.
-4. **Test end-to-end** — call the number, walk through each workflow path.
-5. **Observability** — verify logs and KV counters, write the "what broke" story.
-6. **Documentation** — README with setup, architecture, observability story, demo script.
+1. **MCP server** (TS edge function) — scaffold, implement 7 tools + draft store, test locally, ship.
+2. **Webhook edge function** (TS) — scaffold with `--actor`, implement Actor + KV + dynamic vars, ship.
+3. **KV namespace** — create via CLI, put `online_booking_enabled`, `clinic_hours`.
+4. **Assistant + workflow** — create assistant in portal, set MCP URL + webhook URL, build the 7-node workflow, assign phone number.
+5. **Test end-to-end** — call the number, walk through each workflow path.
+6. **Observability** — verify logs, KV counters, `/metrics` endpoint, write "what broke" story.
+7. **Documentation** — README with setup, architecture, observability story, demo script.
