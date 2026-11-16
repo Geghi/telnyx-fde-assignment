@@ -2,6 +2,9 @@ name = "mcp-server"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
+[storage.kv.CLINIC_KV]
+id = "82be9f48-ca78-43f7-a50a-c0109d536465"
+
 [edge_compute]
 func_id = "5d976a49-dfcc-4c22-832e-461ebd495e38"
 func_name = "mcp-server"

@@ -30,18 +30,42 @@ describe("KV service", () => {
   });
 
   describe("getClinicHours", () => {
-    it("returns cached clinic hours when KV has the key", async () => {
+    it("returns hours from the business_info JSON blob when KV has it", async () => {
       const { getClinicHours } = await import("../src/services/kv.js");
-      const env = createMockEnv({ clinic_hours: "Mon-Thu 7am-7pm" });
+      const env = createMockEnv({
+        business_info: JSON.stringify({
+          name: "Bright Smile Dental",
+          hours: "Mon-Thu 7am-7pm",
+          location: "123 Smile Ave",
+          phone: "+12175551234",
+          policy: "Arrive 15 min early.",
+        }),
+      });
       expect(await getClinicHours(env)).toBe("Mon-Thu 7am-7pm");
     });
 
-    it("falls back to the default hours string when KV has no value", async () => {
+    it("falls back to the default hours string when KV has no business_info", async () => {
       const { getClinicHours } = await import("../src/services/kv.js");
       const env = createMockEnv({});
       const hours = await getClinicHours(env);
       expect(hours).toContain("Mon-Fri");
       expect(hours).toContain("Sat");
+    });
+
+    it("falls back to the default when business_info is malformed JSON", async () => {
+      const { getClinicHours } = await import("../src/services/kv.js");
+      const env = createMockEnv({ business_info: "not json {{" });
+      const hours = await getClinicHours(env);
+      expect(hours).toContain("Mon-Fri");
+    });
+
+    it("falls back to the default when business_info lacks the hours field", async () => {
+      const { getClinicHours } = await import("../src/services/kv.js");
+      const env = createMockEnv({
+        business_info: JSON.stringify({ name: "X" }),
+      });
+      const hours = await getClinicHours(env);
+      expect(hours).toContain("Mon-Fri");
     });
   });
 

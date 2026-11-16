@@ -39,6 +39,21 @@ export interface DraftStatus {
   missingFields: string[];
 }
 
+/** KV key holding the canonical clinic config (business info + services). */
+export const BUSINESS_INFO_KV_KEY = "business_info";
+
+/** Default hours string, returned by the webhook when KV is missing/empty. */
+export const DEFAULT_BUSINESS_HOURS = "Mon-Fri 8am-6pm, Sat 9am-2pm, Sun closed";
+
+interface KvStore {
+  get(key: string): Promise<string | null>;
+}
+
+interface BusinessConfig {
+  businessInfo: BusinessInfo;
+  services: Service[];
+}
+
 const FIELD_ORDER: (keyof BookingDraft)[] = [
   "reason",
   "preferredDate",
@@ -57,8 +72,9 @@ export class Store {
   private appointments: Map<string, Booking> = new Map();
   private drafts: Map<string, BookingDraft> = new Map();
   private bookingCounter = 0;
+  private initialized = false;
 
-  private readonly businessInfo: BusinessInfo = {
+  private businessInfo: BusinessInfo = {
     name: "Bright Smile Dental",
     hours: "Mon-Fri 8am-6pm, Sat 9am-2pm, Sun closed",
     location: "123 Smile Ave, Springfield, IL 62701",
@@ -67,7 +83,7 @@ export class Store {
       "Please arrive 15 minutes early. Cancel at least 24 hours in advance to avoid a fee.",
   };
 
-  private readonly services: Service[] = [
+  private services: Service[] = [
     {
       name: "Routine Cleaning",
       price: 95,
@@ -105,6 +121,36 @@ export class Store {
     "16:00",
     "17:00",
   ];
+
+  get isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  /**
+   * Load clinic config (business info + services) from the shared
+   * CLINIC_KV namespace. Falls back to the hardcoded defaults above when KV
+   * is missing, unreadable, or malformed. Idempotent. Safe to call from a
+   * non-KV environment (tests) — pass a no-op kv.
+   */
+  async initFromKv(kv: KvStore): Promise<void> {
+    try {
+      const raw = await kv.get(BUSINESS_INFO_KV_KEY);
+      if (!raw) {
+        this.initialized = true;
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<BusinessConfig>;
+      if (parsed.businessInfo && isValidBusinessInfo(parsed.businessInfo)) {
+        this.businessInfo = parsed.businessInfo;
+      }
+      if (Array.isArray(parsed.services) && parsed.services.every(isValidService)) {
+        this.services = parsed.services;
+      }
+    } catch {
+      // KV read or parse failure — keep defaults.
+    }
+    this.initialized = true;
+  }
 
   getBusinessInfo(): BusinessInfo {
     return this.businessInfo;
@@ -225,4 +271,26 @@ export class Store {
     this.appointments.delete(callerPhone);
     return { cancelled: true, date: booking.slot.date };
   }
+}
+
+function isValidBusinessInfo(v: unknown): v is BusinessInfo {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.name === "string" &&
+    typeof o.hours === "string" &&
+    typeof o.location === "string" &&
+    typeof o.phone === "string" &&
+    typeof o.policy === "string"
+  );
+}
+
+function isValidService(v: unknown): v is Service {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.name === "string" &&
+    typeof o.price === "number" &&
+    typeof o.description === "string"
+  );
 }

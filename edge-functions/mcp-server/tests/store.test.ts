@@ -1,11 +1,101 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { Store } from "../src/store/index.js";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { Store, BUSINESS_INFO_KV_KEY } from "../src/store/index.js";
 
 describe("Store", () => {
   let store: Store;
 
   beforeEach(() => {
     store = new Store();
+  });
+
+  describe("KV config loading", () => {
+    it("uses default business info when KV is empty", async () => {
+      const kv = { get: async () => null };
+      await store.initFromKv(kv);
+      expect(store.isInitialized).toBe(true);
+      expect(store.getBusinessInfo().name).toBe("Bright Smile Dental");
+      expect(store.getBusinessInfo().hours).toContain("Mon-Fri");
+    });
+
+    it("loads business info + services from KV when present", async () => {
+      const expectedInfo = {
+        name: "Springfield Smiles",
+        hours: "Tue-Sat 9am-5pm",
+        location: "456 First St, Springfield, IL 62701",
+        phone: "+12175559999",
+        policy: "Please arrive 10 min early.",
+      };
+      const expectedServices = [
+        { name: "Custom Cleaning", price: 110, description: "Deep clean." },
+      ];
+      const kv = {
+        get: vi.fn(async (key: string) =>
+          key === BUSINESS_INFO_KV_KEY
+            ? JSON.stringify({ businessInfo: expectedInfo, services: expectedServices })
+            : null
+        ),
+      };
+      await store.initFromKv(kv);
+      expect(store.getBusinessInfo()).toEqual(expectedInfo);
+      expect(store.getServices()).toEqual(expectedServices);
+      expect(store.isInitialized).toBe(true);
+    });
+
+    it("falls back to defaults when KV returns malformed JSON", async () => {
+      const kv = { get: async () => "not json {{" };
+      await store.initFromKv(kv);
+      expect(store.getBusinessInfo().name).toBe("Bright Smile Dental");
+    });
+
+    it("falls back to defaults when business info object is missing required fields (location/phone/policy)", async () => {
+      const kv = {
+        get: async () =>
+          JSON.stringify({
+            businessInfo: { name: "Missing Fields", hours: "Y" },
+            services: [],
+          }),
+      };
+      await store.initFromKv(kv);
+      expect(store.getBusinessInfo().name).toBe("Bright Smile Dental");
+    });
+
+    it("ignores services that don't match the Service shape", async () => {
+      const kv = {
+        get: async () =>
+          JSON.stringify({
+            businessInfo: {
+              name: "X", hours: "Y", location: "Z", phone: "P", policy: "Q",
+            },
+            services: [{ name: "Bad Service", price: "not a number" }],
+          }),
+      };
+      await store.initFromKv(kv);
+      expect(store.getBusinessInfo().name).toBe("X");
+      const services = store.getServices();
+      expect(services.length).toBe(5);
+      expect(services[0].name).toBe("Routine Cleaning");
+    });
+
+    it("calling initFromKv twice only overrides when new KV provides valid data", async () => {
+      const kv1 = {
+        get: async () =>
+          JSON.stringify({
+            businessInfo: { name: "First", hours: "1", location: "2", phone: "3", policy: "4" },
+            services: [],
+          }),
+      };
+      await store.initFromKv(kv1);
+      expect(store.getBusinessInfo().name).toBe("First");
+
+      const kv2 = { get: async () => null };
+      await store.initFromKv(kv2);
+      expect(store.getBusinessInfo().name).toBe("First");
+    });
+
+    it("store works without initFromKv being called (uses defaults, tests use this path)", () => {
+      expect(store.getBusinessInfo().name).toBe("Bright Smile Dental");
+      expect(store.isInitialized).toBe(false);
+    });
   });
 
   describe("business info", () => {

@@ -93,7 +93,14 @@ describe("handleWebhook", () => {
   it("uses cached clinic_hours from KV", async () => {
     const { handleWebhook } = await import("../src/handlers/webhook.js");
     const env = createMockEnv({
-      clinic_hours: "Mon-Thu 7am-7pm, Fri 8am-4pm",
+      business_info: JSON.stringify({
+        name: "Bright Smile Dental",
+        hours: "Mon-Thu 7am-7pm, Fri 8am-4pm",
+        location: "123 Smile Ave",
+        phone: "+12175551234",
+        policy: "Arrive 15 min early.",
+        services: [],
+      }),
       online_booking_enabled: "true",
     });
 
@@ -116,6 +123,31 @@ describe("handleWebhook", () => {
     const res = await handleWebhook(req, env);
     const body = await res.json();
     expect(body.dynamic_variables.clinic_hours).toBe("Mon-Thu 7am-7pm, Fri 8am-4pm");
+  });
+
+  it("falls back to default hours when business_info KV is missing", async () => {
+    const { handleWebhook } = await import("../src/handlers/webhook.js");
+    const env = createMockEnv({ online_booking_enabled: "true" });
+
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      body: JSON.stringify({
+        data: {
+          event_type: "assistant.initialization",
+          payload: {
+            telnyx_conversation_channel: "phone_call",
+            telnyx_agent_target: "+13128675309",
+            telnyx_end_user_target: "+15551234567",
+            call_control_id: "v3:test123",
+            assistant_id: "assistant_test",
+          },
+        },
+      }),
+    });
+
+    const res = await handleWebhook(req, env);
+    const body = await res.json();
+    expect(body.dynamic_variables.clinic_hours).toBe("Mon-Fri 8am-6pm, Sat 9am-2pm, Sun closed");
   });
 
   it("returns 400 for invalid payload", async () => {
