@@ -30,26 +30,53 @@ describe("Store", () => {
 
   describe("availability", () => {
     it("returns slots for a given date", () => {
-      const slots = store.checkAvailability("2026-11-16");
+      const slots = store.checkAvailability("2026-12-02");
       expect(slots.length).toBeGreaterThan(0);
-      expect(slots[0].date).toBe("2026-11-16");
+      expect(slots[0].date).toBe("2026-12-02");
       expect(slots[0].time).toBeDefined();
       expect(slots[0].dentist).toBeDefined();
     });
 
     it("returns empty for a Sunday (clinic closed)", () => {
-      const slots = store.checkAvailability("2026-11-15");
+      const slots = store.checkAvailability("2026-12-06");
       expect(slots).toEqual([]);
+    });
+
+    it("excludes past times when checking today with a current time", () => {
+      const now = new Date("2026-11-16T14:30:00");
+      const slots = store.checkAvailability("2026-11-16", now);
+      expect(slots.find((s) => s.time === "09:00")).toBeUndefined();
+      expect(slots.find((s) => s.time === "13:00")).toBeUndefined();
+      expect(slots.find((s) => s.time === "15:00")).toBeDefined();
+      expect(slots.find((s) => s.time === "17:00")).toBeDefined();
+    });
+
+    it("includes all morning slots when checking today before opening", () => {
+      const now = new Date("2026-11-16T07:00:00");
+      const slots = store.checkAvailability("2026-11-16", now);
+      expect(slots.find((s) => s.time === "09:00")).toBeDefined();
+      expect(slots.find((s) => s.time === "11:00")).toBeDefined();
+    });
+
+    it("returns all slots for a future date regardless of now", () => {
+      const now = new Date("2026-11-16T20:00:00");
+      const slots = store.checkAvailability("2026-12-01", now);
+      expect(slots.find((s) => s.time === "09:00")).toBeDefined();
+    });
+
+    it("returns all slots for today when now is not provided", () => {
+      const slots = store.checkAvailability("2026-12-02");
+      expect(slots.find((s) => s.time === "09:00")).toBeDefined();
     });
 
     it("excludes already booked slots", () => {
       store.createBooking({
         callerPhone: "+15551234567",
         name: "John",
-        slot: { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" },
+        slot: { date: "2026-12-02", time: "09:00", dentist: "Dr. Lee" },
         reason: "cleaning",
       });
-      const slots = store.checkAvailability("2026-11-16");
+      const slots = store.checkAvailability("2026-12-02");
       expect(slots.find((s) => s.time === "09:00")).toBeUndefined();
     });
   });

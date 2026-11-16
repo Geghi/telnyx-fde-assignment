@@ -48,7 +48,7 @@ export function createMcpServer(store: Store): McpServer {
 
   server.tool(
     "check_availability",
-    "Checks open appointment slots for a given date. Returns available time slots with dentist names. Date must be YYYY-MM-DD format.",
+    "Checks open appointment slots for a given date. Returns available time slots with dentist names. Date must be YYYY-MM-DD format. Slots in the past (earlier today than now) are excluded automatically.",
     {
       date_from: z.string().describe("Date to search from (YYYY-MM-DD)"),
       date_to: z
@@ -57,17 +57,18 @@ export function createMcpServer(store: Store): McpServer {
         .describe("Optional end date for range search (YYYY-MM-DD). Defaults to date_from only."),
     },
     async (args) => {
+      const now = new Date();
       const slots: Slot[] = [];
       if (args.date_to) {
         const start = new Date(args.date_from + "T00:00:00");
         const end = new Date(args.date_to + "T00:00:00");
         for (let d = start; d <= end; d.setDate(d.getDate() + 1)) {
           slots.push(
-            ...store.checkAvailability(d.toISOString().split("T")[0]!)
+            ...store.checkAvailability(d.toISOString().split("T")[0]!, now)
           );
         }
       } else {
-        slots.push(...store.checkAvailability(args.date_from));
+        slots.push(...store.checkAvailability(args.date_from, now));
       }
       return {
         content: [
@@ -75,7 +76,7 @@ export function createMcpServer(store: Store): McpServer {
             type: "text" as const,
             text:
               slots.length === 0
-                ? "No available slots found. The clinic may be closed on that date."
+                ? "No available slots found. The clinic may be closed on that date, or all remaining slots today are in the past."
                 : JSON.stringify(slots, null, 2),
           },
         ],

@@ -114,7 +114,7 @@ export class Store {
     return this.services;
   }
 
-  checkAvailability(date: string): Slot[] {
+  checkAvailability(date: string, now: Date = new Date()): Slot[] {
     const day = new Date(date + "T00:00:00");
     const dow = day.getDay();
     if (dow === 0) return [];
@@ -126,10 +126,20 @@ export class Store {
         .map((b) => b.slot.time)
     );
 
+    const today = now.toISOString().slice(0, 10);
+    const currentHourMin =
+      now.getUTCHours() * 60 + now.getUTCMinutes();
+    const isToday = date === today;
+
     const slots: Slot[] = [];
     for (const time of this.timeSlots) {
       if (booked.has(time)) continue;
       if (dow === 6 && parseInt(time) >= 15) continue;
+      if (isToday) {
+        const [h, m] = time.split(":").map(Number);
+        const slotMinutes = h * 60 + m;
+        if (slotMinutes <= currentHourMin) continue;
+      }
       const dentist = dentists[slots.length % dentists.length];
       slots.push({ date, time, dentist });
     }
