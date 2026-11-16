@@ -7,10 +7,7 @@ binding = "CALL_SESSION"
 type = "CallSession"
 
 [storage.kv.CLINIC_KV]
-# id = "<kv-namespace-uuid>"  # fill after: telnyx-edge storage kv create --name clinic-kv
-
-[telnyx]
-binding = "TELNYX"
+id = "82be9f48-ca78-43f7-a50a-c0109d536465"
 
 [edge_compute]
 func_id = "03381a02-a5a7-4e6b-a224-f5aa613d3332"

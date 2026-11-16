@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "node -e \"const fs=require('fs'),p='node_modules/@telnyx/edge-runtime/package.json';try{const d=JSON.parse(fs.readFileSync(p,'utf8'));d.sideEffects=false;fs.writeFileSync(p,JSON.stringify(d,null,2)+'\\n');console.log('patched @telnyx/edge-runtime sideEffects=false')}catch(e){console.log('skip sideEffects patch:',e.message)}\""
   },
   "dependencies": {
     "@telnyx/edge-runtime": "latest"
