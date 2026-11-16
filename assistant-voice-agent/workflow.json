@@ -1,0 +1,128 @@
+{
+  "start_node_id": "n_greeting",
+  "nodes": [
+    {
+      "type": "speak",
+      "id": "n_greeting",
+      "name": "Greeting",
+      "message": "{{PROMPT:greeting}}",
+      "position": { "x": 60, "y": 80 }
+    },
+    {
+      "type": "prompt",
+      "id": "n_receptionist",
+      "name": "Receptionist",
+      "instructions": "{{PROMPT:receptionist}}",
+      "instructions_mode": "append",
+      "tools_mode": "append",
+      "position": { "x": 300, "y": 80 }
+    },
+    {
+      "type": "prompt",
+      "id": "n_booking",
+      "name": "Booking",
+      "instructions": "{{PROMPT:booking}}",
+      "instructions_mode": "append",
+      "tools_mode": "append",
+      "position": { "x": 560, "y": 0 }
+    },
+    {
+      "type": "prompt",
+      "id": "n_cancellation",
+      "name": "Cancellation",
+      "instructions": "{{PROMPT:cancellation}}",
+      "instructions_mode": "append",
+      "tools_mode": "append",
+      "position": { "x": 560, "y": 160 }
+    },
+    {
+      "type": "speak",
+      "id": "n_confirmation",
+      "name": "Confirmation",
+      "message": "{{PROMPT:confirmation}}",
+      "position": { "x": 820, "y": 80 }
+    },
+    {
+      "type": "speak",
+      "id": "n_escalation",
+      "name": "Escalation",
+      "message": "{{PROMPT:escalation}}",
+      "position": { "x": 560, "y": 300 }
+    },
+    {
+      "type": "tool",
+      "id": "n_transfer",
+      "name": "Transfer",
+      "shared_tool_id": "{{TRANSFER_TOOL_ID}}",
+      "position": { "x": 820, "y": 300 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_greeting_to_receptionist",
+      "start_node_id": "n_greeting",
+      "target": { "type": "node", "node_id": "n_receptionist" },
+      "condition": { "type": "default" }
+    },
+    {
+      "id": "e_receptionist_to_booking",
+      "start_node_id": "n_receptionist",
+      "target": { "type": "node", "node_id": "n_booking" },
+      "condition": { "type": "llm", "prompt": "The caller wants to book, schedule, or reschedule an appointment." }
+    },
+    {
+      "id": "e_receptionist_to_cancellation",
+      "start_node_id": "n_receptionist",
+      "target": { "type": "node", "node_id": "n_cancellation" },
+      "condition": { "type": "llm", "prompt": "The caller wants to cancel an appointment." }
+    },
+    {
+      "id": "e_receptionist_to_escalation",
+      "start_node_id": "n_receptionist",
+      "target": { "type": "node", "node_id": "n_escalation" },
+      "condition": { "type": "llm", "prompt": "The caller requests to speak with a human or reports a dental emergency." }
+    },
+    {
+      "id": "e_booking_to_confirmation",
+      "start_node_id": "n_booking",
+      "target": { "type": "node", "node_id": "n_confirmation" },
+      "condition": { "type": "llm", "prompt": "The booking or callback request has been completed." }
+    },
+    {
+      "id": "e_booking_to_receptionist",
+      "start_node_id": "n_booking",
+      "target": { "type": "node", "node_id": "n_receptionist" },
+      "condition": { "type": "llm", "prompt": "The caller wants to abandon the booking and do something else." }
+    },
+    {
+      "id": "e_cancellation_to_confirmation",
+      "start_node_id": "n_cancellation",
+      "target": { "type": "node", "node_id": "n_confirmation" },
+      "condition": { "type": "llm", "prompt": "The cancellation has been completed." }
+    },
+    {
+      "id": "e_cancellation_to_receptionist",
+      "start_node_id": "n_cancellation",
+      "target": { "type": "node", "node_id": "n_receptionist" },
+      "condition": { "type": "llm", "prompt": "The caller wants to abandon the cancellation and do something else." }
+    },
+    {
+      "id": "e_confirmation_to_receptionist",
+      "start_node_id": "n_confirmation",
+      "target": { "type": "node", "node_id": "n_receptionist" },
+      "condition": { "type": "default" }
+    },
+    {
+      "id": "e_escalation_to_transfer",
+      "start_node_id": "n_escalation",
+      "target": { "type": "node", "node_id": "n_transfer" },
+      "condition": { "type": "default" }
+    },
+    {
+      "id": "e_transfer_to_receptionist",
+      "start_node_id": "n_transfer",
+      "target": { "type": "node", "node_id": "n_receptionist" },
+      "condition": { "type": "default" }
+    }
+  ]
+}

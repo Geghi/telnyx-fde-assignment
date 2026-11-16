@@ -1,0 +1,24 @@
+{
+  "name": "assistant-voice-agent",
+  "version": "0.1.0",
+  "description": "Bright Smile Dental — AI Assistant workflow definition + setup script",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "setup": "tsx setup.ts",
+    "chat": "tsx chat.ts",
+    "trace": "tsx trace.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}
