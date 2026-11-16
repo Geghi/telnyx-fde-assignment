@@ -8,6 +8,7 @@
     "setup": "tsx setup.ts",
     "chat": "tsx chat.ts",
     "trace": "tsx trace.ts",
+    "eval": "tsx eval/runner.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

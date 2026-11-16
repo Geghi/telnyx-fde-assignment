@@ -1,0 +1,22 @@
+{
+  "name": "scenario-a-today-slots-not-in-past",
+  "description": "After the assistant already called check_availability for today and offered 9 AM, the caller says 9 AM is in the past. The assistant must re-check availability and offer only future slots. Tests the past-slot filtering fix in the MCP store.",
+  "source_conversation_id": "5d72fb92-d719-4c51-992f-820beb1484ed",
+  "replay_user_turns": [
+    "hi",
+    "i need dental exam asap",
+    "9AM is before current time... it's in the past."
+  ],
+  "test_turn": "morning please",
+  "assertions": {
+    "tool_calls": [
+      {
+        "name": "check_availability",
+        "expected": true,
+        "description": "assistant must call check_availability in response to the test turn or during replay of the third turn"
+      }
+    ],
+    "tool_result_check": "no_past_slots",
+    "llm_judge_rubric": "The response must offer a specific time slot that is AFTER the current time. The response must NOT claim 9 AM or any past time is available. The response must be short (2-3 sentences max, no bullet points). The response must ask the caller to confirm a specific slot."
+  }
+}
