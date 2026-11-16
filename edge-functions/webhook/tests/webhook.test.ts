@@ -168,7 +168,37 @@ describe("handleWebhook", () => {
 
     await handleWebhook(makeReq(), env);
     await handleWebhook(makeReq(), env);
-    const count = await env.CLINIC_KV.get("webhook_calls:+15551234567");
+    const count = await env.CLINIC_KV.get("webhook_calls/15551234567");
     expect(count).toBe("2");
+  });
+
+  it("writes only KV-valid keys (no colons) for per-caller counters", async () => {
+    const { handleWebhook } = await import("../src/handlers/webhook.js");
+    const kvData: Record<string, string> = { online_booking_enabled: "true" };
+    const env = createMockEnv(kvData);
+
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      body: JSON.stringify({
+        data: {
+          event_type: "assistant.initialization",
+          payload: {
+            telnyx_conversation_channel: "phone_call",
+            telnyx_agent_target: "+13128675309",
+            telnyx_end_user_target: "+15551234567",
+            call_control_id: "v3:test123",
+            assistant_id: "assistant_test",
+          },
+        },
+      }),
+    });
+
+    await handleWebhook(req, env);
+
+    const validKey = /^[a-zA-Z0-9_\-\/=.]+$/;
+    for (const key of Object.keys(kvData)) {
+      expect(validKey.test(key), `key "${key}" contains invalid chars for KV`).toBe(true);
+      expect(key.includes(":"), `key "${key}" contains a colon`).toBe(false);
+    }
   });
 });

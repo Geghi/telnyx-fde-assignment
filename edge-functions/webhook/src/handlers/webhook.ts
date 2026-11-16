@@ -25,7 +25,7 @@ export async function handleWebhook(
   const onlineBookingEnabled = await getFeatureFlag(env, "online_booking_enabled");
   const clinicHours = await getClinicHours(env);
 
-  await incrementCounter(env, `webhook_calls:${callerPhone}`).catch(() => {});
+  await incrementCounter(env, `webhook_calls/${callerPhone.replace(/^\+/, "")}`).catch(() => {});
 
   const response = assembleDynamicVariables({
     session,

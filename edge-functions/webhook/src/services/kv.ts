@@ -19,5 +19,6 @@ export async function incrementCounter(env: Env, key: string): Promise<void> {
 
 export async function getCounter(env: Env, key: string): Promise<number> {
   const value = await env.CLINIC_KV.get(key);
-  return parseInt(value ?? "0", 10);
+  const parsed = parseInt(value ?? "0", 10);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
