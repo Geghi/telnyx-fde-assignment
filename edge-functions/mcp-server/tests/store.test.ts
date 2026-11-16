@@ -78,17 +78,22 @@ describe("Store", () => {
       store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
       store.updateDraft("+15551234567", "name", "John");
       const draft = store.getDraft("+15551234567");
-      expect(draft.reason).toBe("cleaning");
-      expect(draft.preferredDate).toBe("2026-11-16");
-      expect(draft.slot.time).toBe("09:00");
-      expect(draft.name).toBe("John");
+      expect(draft).not.toBeNull();
+      expect(draft!.reason).toBe("cleaning");
+      expect(draft!.preferredDate).toBe("2026-11-16");
+      expect(draft!.slot!.time).toBe("09:00");
+      expect(draft!.name).toBe("John");
     });
 
     it("isolates drafts per caller", () => {
       store.updateDraft("+15551234567", "reason", "cleaning");
       store.updateDraft("+19998887777", "reason", "checkup");
-      expect(store.getDraft("+15551234567").reason).toBe("cleaning");
-      expect(store.getDraft("+19998887777").reason).toBe("checkup");
+      const d1 = store.getDraft("+15551234567");
+      const d2 = store.getDraft("+19998887777");
+      expect(d1).not.toBeNull();
+      expect(d2).not.toBeNull();
+      expect(d1!.reason).toBe("cleaning");
+      expect(d2!.reason).toBe("checkup");
     });
   });
 
