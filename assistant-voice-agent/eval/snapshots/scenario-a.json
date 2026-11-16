@@ -13,10 +13,10 @@
       {
         "name": "check_availability",
         "expected": true,
-        "description": "assistant must call check_availability in response to the test turn or during replay of the third turn"
+        "description": "assistant must call check_availability in response to the test turn or during replay"
       }
     ],
     "tool_result_check": "no_past_slots",
-    "llm_judge_rubric": "The response must offer a specific time slot that is AFTER the current time. The response must NOT claim 9 AM or any past time is available. The response must be short (2-3 sentences max, no bullet points). The response must ask the caller to confirm a specific slot."
+    "llm_judge_rubric": "The response must offer a specific time slot that is in the FUTURE (a later time today, or any time tomorrow/later). 9 AM is acceptable ONLY if offered for tomorrow or a future date. The response must NOT claim 9 AM today (or any time earlier than now today) is available. The response must be short (2-3 sentences max, no bullet points) and must ask the caller to confirm a specific slot."
   }
 }

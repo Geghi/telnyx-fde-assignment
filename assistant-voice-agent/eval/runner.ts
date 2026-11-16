@@ -189,7 +189,7 @@ async function main() {
     const status = result.passed ? "PASS" : "FAIL";
     console.log(`  ${status} (${result.duration_ms}ms)`);
     console.log(`  Response: ${result.test_response.slice(0, 150)}`);
-    console.log(`  Tool calls: ${result.tool_calls_observed.map((t) => t.name).join(", ") || "(none)"}`);
+    console.log(`  Tool calls: ${result.tool_calls_observed.map((t) => `${t.name}(${t.arguments})`).join(", ") || "(none)"}`);
     for (const ta of result.tool_call_assertions) {
       console.log(`    ${ta.passed ? "✓" : "✗"} ${ta.name} (expected=${ta.expected})`);
     }

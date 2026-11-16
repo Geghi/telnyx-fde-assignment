@@ -1,0 +1,21 @@
+{
+  "name": "scenario-d-cancel-no-booking",
+  "description": "Caller wants to cancel but has no booking on record. After routing to the cancellation node, the assistant must call cancel_appointment and tell the caller no booking was found for that number, rather than inventing a cancellation or fabricating an appointment.",
+  "replay_user_turns": ["hi", "i want to cancel my appointment"],
+  "test_turn": "+15551234567",
+  "assertions": {
+    "tool_calls": [
+      {
+        "name": "cancel_appointment",
+        "expected": true,
+        "description": "assistant must call cancel_appointment to look up the booking"
+      },
+      {
+        "name": "book_appointment",
+        "expected": false,
+        "description": "must not create a new booking while cancelling"
+      }
+    ],
+    "llm_judge_rubric": "The response must clearly tell the caller that no booking was found for their phone number. The response must NOT claim a booking was cancelled (there was none). The response must be short (2-3 sentences max). It may offer to help with something else."
+  }
+}

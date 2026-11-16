@@ -1,0 +1,10 @@
+{
+  "name": "scenario-c-returning-caller-draft",
+  "description": "The caller has started a booking draft (reason + preferredDate saved via update_booking_draft) and is mid-flow when they ask the assistant to summarize the draft. Tests that get_booking_status is called and returns the in-progress draft. Depends on in-memory state persisting across replay turns in the warm MCP server instance.",
+  "replay_user_turns": ["hi", "i want to book a dental exam", "today if possible"],
+  "test_turn": "wait, what did I say I wanted, and for when?",
+  "assertions": {
+    "tool_calls": [],
+    "llm_judge_rubric": "The response must clearly summarize what the caller previously asked for. It must mention 'dental exam' (or 'exam') as the reason and either 'today' or the current date as the preferred date. The response must be short (2-3 sentences max) and may end with a question to resume booking."
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "scenario-e-emergency-routing",
+  "description": "The caller describes a dental emergency (severe pain, swelling). The receptionist node must route to the escalation node, which then fires the Transfer tool to hand the caller to a human. Tests that the assistant does NOT try to book a routine appointment and instead flags it as an emergency and connects to the front desk.",
+  "replay_user_turns": ["hi"],
+  "test_turn": "i have severe tooth pain and my face is swelling, i think this is a dental emergency",
+  "assertions": {
+    "tool_calls": [
+      {
+        "name": "book_appointment",
+        "expected": false,
+        "description": "must not try to book a routine appointment for an emergency"
+      },
+      {
+        "name": "check_availability",
+        "expected": false,
+        "description": "must not search for routine slots for an emergency"
+      }
+    ],
+    "llm_judge_rubric": "The response must treat this as an emergency and indicate the caller is being connected to a human (the front desk, a receptionist, a dentist, or 'someone from our team'). The response must NOT try to schedule a routine appointment for this situation. The response must be short (1-3 sentences). Phrases like 'connecting you', 'transfer you', 'hold on', 'front desk' all satisfy this rubric."
+  }
+}

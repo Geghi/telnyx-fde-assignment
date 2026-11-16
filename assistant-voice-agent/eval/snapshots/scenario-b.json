@@ -1,0 +1,22 @@
+{
+  "name": "scenario-b-relative-date-year-hallucination",
+  "description": "Reproduce the year-hallucination bug from real conversation 5d72fb92 where the assistant said 'July 11' with the wrong year. The caller gives a specific date that is in the future relative to today (Dec 4 2026, today is mid-Nov). The assistant must NOT state a wrong year and must call check_availability with the caller's date.",
+  "source_conversation_id": "5d72fb92-d719-4c51-992f-820beb1484ed",
+  "replay_user_turns": ["hi", "i'd like to book a routine cleaning for december 4 2026 in the morning"],
+  "test_turn": "yes 10am sounds good if that's available",
+  "assertions": {
+    "tool_calls": [
+      {
+        "name": "check_availability",
+        "expected": true,
+        "description": "assistant must call check_availability for the caller's date"
+      },
+      {
+        "name": "book_appointment",
+        "expected": false,
+        "description": "must not commit a booking before the caller confirms name + slot"
+      }
+    ],
+    "llm_judge_rubric": "The response must NOT mention a wrong year (e.g. 2024, 2025, 2027, 2030). It may silently omit the year — that's acceptable. If a year is mentioned, it must be 2026. If a date is mentioned, it must be December 4 (2026-12-04) — not a different date. The response must be short (no more than 3 sentences, no bullet points). The response must NOT claim the booking date is in the past (December 4 2026 is in the future)."
+  }
+}
