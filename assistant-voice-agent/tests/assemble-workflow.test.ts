@@ -84,4 +84,40 @@ describe("assembleWorkflow", () => {
       expect(text).not.toContain("{{TRANSFER_TOOL_ID}}");
     }
   });
+
+  it("leaves calendar placeholders in the booking prompt when no calendar is passed", () => {
+    const flow = assembleWorkflow({
+      workflowPath: "workflow.json",
+      promptsDir: "prompts",
+      transferToolId: "x",
+    });
+    const booking = flow.nodes.find((n) => n.id === "n_booking");
+    expect((booking as { instructions?: string }).instructions).toContain("{{today_date}}");
+    expect((booking as { instructions?: string }).instructions).toContain("{{week_snapshot}}");
+  });
+
+  it("substitutes calendar placeholders in the booking prompt when calendar is passed", () => {
+    const flow = assembleWorkflow({
+      workflowPath: "workflow.json",
+      promptsDir: "prompts",
+      transferToolId: "x",
+      calendar: {
+        today_date: "2026-11-16",
+        weekday: "Mon",
+        week_snapshot: "Mon 16, Tue 17, Wed 18, Thu 19, Fri 20, Sat 21, Sun 22",
+        current_month: "November",
+        next_month: "December",
+      },
+    });
+    const booking = flow.nodes.find((n) => n.id === "n_booking");
+    const text = (booking as { instructions?: string }).instructions ?? "";
+    expect(text).toContain("TODAY IS Mon, 2026-11-16.");
+    expect(text).toContain("This week: Mon 16, Tue 17, Wed 18, Thu 19, Fri 20, Sat 21, Sun 22.");
+    expect(text).toContain("Current month: November. Next month: December.");
+    expect(text).not.toContain("{{today_date}}");
+    expect(text).not.toContain("{{week_snapshot}}");
+    expect(text).not.toContain("{{current_month}}");
+    expect(text).not.toContain("{{next_month}}");
+    expect(text).not.toContain("{{weekday}}");
+  });
 });

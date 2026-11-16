@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { CalendarSnapshot } from "./calendar.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -39,6 +40,7 @@ export function assembleWorkflow(args: {
   workflowPath: string;
   promptsDir: string;
   transferToolId: string;
+  calendar?: CalendarSnapshot;
 }): ConversationFlow {
   const root = resolve(here, "..");
   const raw = JSON.parse(readFileSync(resolve(root, args.workflowPath), "utf8"));
@@ -52,9 +54,20 @@ export function assembleWorkflow(args: {
     }
   }
 
-  const replacePlaceholders = (text: string): string =>
-    text.replace(/\{\{PROMPT:([\w-]+)\}\}/g, (_, name) => prompts.get(name) ?? "")
-        .replace(/\{\{TRANSFER_TOOL_ID\}\}/g, args.transferToolId);
+  const calendar = args.calendar;
+  const replacePlaceholders = (text: string): string => {
+    let out = text.replace(/\{\{PROMPT:([\w-]+)\}\}/g, (_, name) => prompts.get(name) ?? "")
+                  .replace(/\{\{TRANSFER_TOOL_ID\}\}/g, args.transferToolId);
+    if (calendar) {
+      out = out
+        .replace(/\{\{today_date\}\}/g, calendar.today_date)
+        .replace(/\{\{weekday\}\}/g, calendar.weekday)
+        .replace(/\{\{week_snapshot\}\}/g, calendar.week_snapshot)
+        .replace(/\{\{current_month\}\}/g, calendar.current_month)
+        .replace(/\{\{next_month\}\}/g, calendar.next_month);
+    }
+    return out;
+  };
 
   const nodes: FlowNode[] = raw.nodes.map((n: FlowNode) => {
     const node: FlowNode = { ...n };

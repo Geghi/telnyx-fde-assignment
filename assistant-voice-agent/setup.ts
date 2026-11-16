@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assembleWorkflow } from "./src/assemble-workflow.js";
+import { calendarSnapshot } from "./src/calendar.js";
+
+const cal = calendarSnapshot();
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -60,7 +63,10 @@ const ASSISTANT_INSTRUCTIONS =
   "Do not use bullet points, numbered lists, or markdown. " +
   "Ask ONE question at a time, then wait for the answer. " +
   "Never make up information — use tools. " +
-  "Always tell the caller what you are doing before calling a tool (e.g. 'Let me check our calendar...').";
+  "Always tell the caller what you are doing before calling a tool (e.g. 'Let me check our calendar...').\n" +
+  `TODAY IS ${cal.weekday}, ${cal.today_date}. This week: ${cal.week_snapshot}. Current month: ${cal.current_month}. Next month: ${cal.next_month}. ` +
+  `When the caller says "today" or "asap", use ${cal.today_date} as the date. When they say a weekday like "next Tuesday", look up the date from the week snapshot above. ` +
+  `Always pass these exact dates to check_availability — never guess the year or the date.`;
 const MCP_SERVER_NAME = "bright-smile-dental-mcp";
 const TRANSFER_TOOL_NAME = "Transfer to Front Desk";
 
@@ -171,12 +177,13 @@ async function findAssistant(): Promise<string | null> {
 async function createOrUpdateAssistant(
   mcpServerId: string,
   transferToolId: string
-): Promise<string> {
+): Promise<{ id: string; texmlAppId: string | null }> {
   assertEnv("WEBHOOK_URL", WEBHOOK_URL);
   const flow = assembleWorkflow({
     workflowPath: "workflow.json",
     promptsDir: "prompts",
     transferToolId,
+    calendar: cal,
   });
 
   const body = {
@@ -189,6 +196,11 @@ async function createOrUpdateAssistant(
       caller_phone: "",
       online_booking_enabled: "true",
       clinic_hours: "Mon-Fri 8am-6pm, Sat 9am-2pm, Sun closed",
+      today_date: cal.today_date,
+      weekday: cal.weekday,
+      week_snapshot: cal.week_snapshot,
+      current_month: cal.current_month,
+      next_month: cal.next_month,
     },
     mcp_servers: [{ id: mcpServerId }],
     conversation_flow: flow,
@@ -197,13 +209,68 @@ async function createOrUpdateAssistant(
 
   const existing = await findAssistant();
   if (existing) {
-    await api(`/ai/assistants/${existing}`, { method: "POST", body });
+    const updated = await api(`/ai/assistants/${existing}`, { method: "POST", body });
     console.log(`Assistant updated: ${existing}`);
-    return existing;
+    return {
+      id: existing,
+      texmlAppId: updated?.telephony_settings?.default_texml_app_id ?? null,
+    };
   }
   const created = await api("/ai/assistants", { method: "POST", body });
   console.log(`Assistant created: ${created.id}`);
-  return created.id;
+  return {
+    id: created.id,
+    texmlAppId: created?.telephony_settings?.default_texml_app_id ?? null,
+  };
+}
+
+async function findOwnedNumber(phone: string): Promise<{ id: string; connectionId: string | null } | null> {
+  const list = await api("/phone_numbers");
+  const numbers = list.data ?? [];
+  const match = numbers.find((n: { phone_number: string }) => n.phone_number === phone);
+  if (!match) return null;
+  return {
+    id: match.id,
+    connectionId: match.connection_id ?? null,
+  };
+}
+
+async function bindPhoneNumber(
+  assistantId: string,
+  texmlAppId: string | null,
+  phoneNumber: string
+): Promise<void> {
+  const owned = await findOwnedNumber(phoneNumber);
+  if (!owned) {
+    console.error(
+      `\nPhone ${phoneNumber} not found on your account. ` +
+      `Run \`npm run buy-number\` first, or buy it in the portal.`
+    );
+    process.exit(1);
+  }
+
+  if (!texmlAppId) {
+    console.error(
+      `Assistant ${assistantId} has no default_texml_app_id in telephony_settings. ` +
+      `The TeXML app is normally auto-created when the assistant is created with telephony enabled. ` +
+      `Check the assistant in the portal, then re-run setup.`
+    );
+    process.exit(1);
+  }
+
+  if (owned.connectionId === texmlAppId) {
+    console.log(`Phone ${phoneNumber} already bound to assistant ${assistantId}.`);
+    return;
+  }
+
+  await api(`/phone_numbers/${owned.id}`, {
+    method: "PATCH",
+    body: {
+      connection_id: texmlAppId,
+      tags: ["bright-smile-dental", "ai-assistant"],
+    },
+  });
+  console.log(`Bound ${phoneNumber} → TeXML app ${texmlAppId} (assistant ${assistantId})`);
 }
 
 async function main() {
@@ -212,16 +279,23 @@ async function main() {
 
   const mcpServerId = await registerMcpServer();
   const transferToolId = await createTransferTool();
-  const assistantId = await createOrUpdateAssistant(mcpServerId, transferToolId);
+  const assistant = await createOrUpdateAssistant(mcpServerId, transferToolId);
 
   console.log("\n=== Setup complete ===");
   console.log(`MCP server:  ${mcpServerId}`);
   console.log(`Transfer:    ${transferToolId}`);
-  console.log(`Assistant:   ${assistantId}`);
-  console.log("\nPhone assignment:");
-  console.log("  1. Portal → Phone Numbers → buy/assign a number");
-  console.log("  2. Set the number's AI Assistant to the assistant above");
-  console.log(`  3. Or: PUT /v2/ai/assistants/${assistantId}/telephony_settings`);
+  console.log(`Assistant:   ${assistant.id}`);
+  if (assistant.texmlAppId) console.log(`TeXML app:   ${assistant.texmlAppId}`);
+
+  const phoneNumber = process.env.ASSISTANT_PHONE_NUMBER ?? "";
+  if (!phoneNumber) {
+    console.log("\nNo ASSISTANT_PHONE_NUMBER in .env.local.");
+    console.log("Run `npm run buy-number` to buy one, then re-run setup.");
+    return;
+  }
+
+  await bindPhoneNumber(assistant.id, assistant.texmlAppId, phoneNumber);
+  console.log(`\nDial-in number: ${phoneNumber}`);
 }
 
 main().catch((err) => {
