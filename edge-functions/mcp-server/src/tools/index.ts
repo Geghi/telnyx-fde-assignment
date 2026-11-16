@@ -59,13 +59,14 @@ export function createMcpServer(store: Store): McpServer {
     async (args) => {
       const now = new Date();
       const slots: Slot[] = [];
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const ymd = (d: Date) =>
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       if (args.date_to) {
         const start = new Date(args.date_from + "T00:00:00");
         const end = new Date(args.date_to + "T00:00:00");
         for (let d = start; d <= end; d.setDate(d.getDate() + 1)) {
-          slots.push(
-            ...store.checkAvailability(d.toISOString().split("T")[0]!, now)
-          );
+          slots.push(...store.checkAvailability(ymd(d), now));
         }
       } else {
         slots.push(...store.checkAvailability(args.date_from, now));
