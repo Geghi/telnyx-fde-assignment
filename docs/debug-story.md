@@ -1,6 +1,6 @@
 # Debug Story — Bright Smile Dental AI
 
-Chronological log of every bug we hit and how we fixed it, so we can look back and pick the best patterns. Not committed yet — review and curate first.
+Log of the bugs we hit, how each was found, and how it was fixed. Entries are kept as they were written, so older entries can describe code that has since changed.
 
 ## 1. Telnyx secret scanner blocks webhook ship (HTTP 422 `generic-api-key`)
 
@@ -111,13 +111,7 @@ Chronological log of every bug we hit and how we fixed it, so we can look back a
 
 ---
 
-## Pending (in progress, not yet fixed/verified)
-
-### 12. Date-sensitive scenarios fail on chat (calendar injection)
-
-**Symptom:** Scenario A replays "hi → i need dental exam asap → 9AM is in the past → morning please". On chat the model has no `{{today_date}}`, so it calls `check_availability({"date_from":"2025-07-31"})` — a past date — and 9 AM passes the filter (wrongly, because it's not "today" from the model's view) and gets offered.
-
-**Fix in progress:** Calendar snapshot (see #5). Webhook computes `today_date`, `week_snapshot`, `current_month`, `next_month` from `new Date()`. setup.ts bakes them into the static `dynamic_variables` config. Booking prompt uses them. Re-run setup before evals to refresh the static config.
+## Resolved (before the eval suite was first green)
 
 ### 13. scenario-b.json became malformed after a manual edit
 

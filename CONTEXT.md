@@ -24,13 +24,13 @@ Identified by the LLM in the Receptionist prompt node.
 ## Slot
 
 An available time window for a dental appointment.
-Has a date, start time, end time, and optionally a dentist assignment.
+Has a date, a start time and a dentist.
 Returned by the `check_availability` MCP tool.
 
 ## Booking
 
 A confirmed appointment: caller name, phone, slot, reason for visit.
-Created by the `book_appointment` MCP tool.
+Created by the `book_appointment` webhook tool.
 Has a `bookingId` for reference.
 
 ## Callback request
@@ -43,20 +43,20 @@ staff will confirm the appointment later. Not a real booking yet.
 
 Removing an existing booking by the caller's request.
 Found by phone number, confirmed with the caller, then cancelled
-via the `cancel_appointment` MCP tool.
+via the `cancel_appointment` webhook tool.
 
 ## Escalation
 
 Transferring the caller to a human (front desk).
 Triggered by the caller asking for a human or reporting a dental emergency.
-The workflow routes to the Escalation speak node; the webhook triggers
-the call transfer via the Telnyx Call Control API.
+The workflow routes to the Escalation speak node, then to a Transfer tool node
+that dial-transfers the call to the front-desk number.
 
 ## Dynamic webhook variables
 
-Data the webhook edge function injects into the conversation before each node transition.
-Sourced from the Actor (caller name, current intent) and KV (feature flags, cached hours).
-Used by the next node's prompt to personalize or route the conversation.
+Data the webhook edge function returns once, at call start, and that stays fixed for the whole call.
+Sourced from the CallSession actor (caller name), KV (feature flag, clinic hours) and the current date.
+Used by prompts to personalize and by edges to route the conversation.
 
 ## Feature flag
 
@@ -66,7 +66,11 @@ if false, the assistant records a callback request instead.
 
 ## Call session
 
-The per-caller state owned by the Stateful Actor.
-Tracks the current intent, partial booking details, and booking history
-across the call's node transitions.
+The per-caller state owned by the CallSession actor: call count, caller name, last booking.
+Lives across calls.
 Keyed by `caller:+{phone}`. Single-threaded: no concurrent writes.
+
+## Booking draft
+
+The details of a booking being collected: reason, preferred date, slot, name.
+Owned by the BookingActor, keyed by `caller:+{phone}`, alongside the confirmed booking or callback request.

@@ -91,14 +91,13 @@ svg .b { stroke-width: 1.4; }
 <body>
 <main>
 <h1>Bright Smile Dental: AI receptionist architecture</h1>
-<p class="sub">Drawn from the code on <code>main</code> plus the working tree (2026-11-17). Where <code>docs/architecture.md</code> disagrees with the code, the code wins (see <a href="#notes">notes</a>).</p>
+<p class="sub">How the code on <code>main</code> works today. Setup, observability and known limits are in the <a href="../../README.md">README</a>.</p>
 <nav>
   <a href="#arch">1 · System architecture</a>
   <a href="#flow">2 · Call flow (booking)</a>
   <a href="#workflow">3 · Conversation workflow</a>
   <a href="#state">4 · State &amp; keys</a>
   <a href="#ops">5 · Deploy &amp; tooling</a>
-  <a href="#notes">6 · Gaps found</a>
 </nav>
 
 <svg width="0" height="0" style="position:absolute">
@@ -199,7 +198,7 @@ svg .b { stroke-width: 1.4; }
   <text class="t-title c-kv" x="614" y="420">CLINIC_KV · shared namespace</text>
   <text class="t-mono" x="614" y="440">online_booking_enabled   "true"|"false"</text>
   <text class="t-mono" x="614" y="456">business_info            {name,hours,…,services[]}</text>
-  <text class="t-mono" x="614" y="472">webhook_calls/&lt;phone&gt;    counter</text>
+  <text class="t-mono" x="614" y="472">webhook_calls, …/&lt;phone&gt;  counters</text>
   <text class="t-mono" x="614" y="488">webhook_errors           counter</text>
 
   <!-- Arrows -->
@@ -268,7 +267,7 @@ svg .b { stroke-width: 1.4; }
   <path class="ar actor" d="M375 176 L513 176"/><text x="382" y="170">getOrCreate()</text>
   <path class="ar actor" d="M375 204 L513 204"/><text x="382" y="198">recordCall() totalCalls++</text>
   <path class="ar kv" d="M375 232 L643 232"/><text x="382" y="226">get online_booking_enabled, business_info</text>
-  <path class="ar kv" d="M375 260 L643 260"/><text x="382" y="254">get/put webhook_calls/&lt;phone&gt; (+1)</text>
+  <path class="ar kv" d="M375 260 L643 260"/><text x="382" y="254">webhook_calls, webhook_calls/&lt;phone&gt; (+1)</text>
   <path class="ar edge dash" d="M375 290 L217 290"/><text x="222" y="284">{dynamic_variables}</text>
   <text class="t-mono" x="222" y="304">caller_phone, caller_name, online_booking_enabled,</text>
   <text class="t-mono" x="222" y="318">clinic_hours, today_date, weekday, week_snapshot…</text>
@@ -289,7 +288,7 @@ svg .b { stroke-width: 1.4; }
   <path class="ar edge" d="M215 544 L773 544"/><text x="222" y="538">update_booking_draft(reason), (preferredDate)</text>
   <path class="ar actor" d="M775 562 L918 562"/><text x="782" y="556" class="t-small">updateDraft → next_step</text>
   <path class="ar edge" d="M215 594 L773 594"/><text x="222" y="588">check_availability(date)</text>
-  <path class="ar actor" d="M775 612 L918 612"/><text x="782" y="606" class="t-small">getBookedSlotForDate</text>
+  <text x="782" y="612" class="t-small">MCP read: no caller, no actor</text>
   <path class="ar edge dash" d="M773 632 L217 632"/><text x="400" y="626">slots: 8 fixed times, Sun closed, Sat &lt; 15:00, today +1 h</text>
   <path class="ar telnyx" d="M215 660 L72 660"/><text x="80" y="654">“First opening is 2 PM with Dr. Patel”</text>
   <path class="ar" d="M70 686 L213 686"/><text x="78" y="680">“OK. I'm Jane.”</text>
@@ -396,7 +395,7 @@ svg .b { stroke-width: 1.4; }
     <h3>CallSession actor <span class="meta">webhook</span></h3>
     <p><code>caller:+&lt;phone&gt;</code>, one per caller, persists across calls</p>
     <ul><li><code>totalCalls</code>: written by the webhook on every call</li>
-    <li><code>callerName</code>, <code>lastBookingId</code>: nobody writes these (see §6)</li></ul>
+    <li><code>callerName</code>, <code>lastBookingId</code>: nobody writes these yet (README, Known limits)</li></ul>
   </div>
   <div class="card" style="--c:var(--actor)">
     <h3>BookingActor <span class="meta">mcp-server</span></h3>
@@ -416,12 +415,12 @@ svg .b { stroke-width: 1.4; }
     <h3>CLINIC_KV</h3>
     <ul><li><code>business_info</code>: clinic config, the one source for both functions (seeded by <code>seed-kv.sh</code>)</li>
     <li><code>online_booking_enabled</code>: feature flag, defaults to <code>"true"</code></li>
-    <li><code>webhook_calls/&lt;phone&gt;</code>, <code>webhook_errors</code>: observability counters</li></ul>
+    <li><code>webhook_calls</code> (total), <code>webhook_calls/&lt;phone&gt;</code>, <code>webhook_errors</code>: observability counters, read by <code>GET /metrics</code></li></ul>
   </div>
   <div class="card" style="--c:var(--edge)">
     <h3>In-process (mcp-server)</h3>
     <ul><li>Business info and services cached at module level per instance, never refreshed</li>
-    <li>A new <code>Store</code> per request. MCP reads use no actor. Without an actor binding it falls back to in-memory Maps, used by tests only</li></ul>
+    <li>A new <code>Store</code> per request. MCP reads carry no caller, so they get no actor and an empty in-memory store: <code>check_availability</code> filters only the fixed grid, not existing bookings</li></ul>
   </div>
   <div class="card" style="--c:var(--telnyx)">
     <h3>Dynamic variables <span class="meta">Telnyx</span></h3>
@@ -460,11 +459,12 @@ svg .b { stroke-width: 1.4; }
   <text class="t-title" x="706" y="44">What setup.ts does (idempotent)</text>
   <text class="t-small" x="706" y="70">1. Register MCP server URL (find by name or create)</text>
   <text class="t-small" x="706" y="92">2. Create the shared transfer tool → FRONT_DESK_NUMBER</text>
-  <text class="t-small" x="706" y="114">3. assembleWorkflow: workflow.json + prompts/*.txt</text>
-  <text class="t-small" x="706" y="130">   + transfer tool id + calendar snapshot</text>
-  <text class="t-small" x="706" y="152">4. Create or update the assistant: model, webhook URL,</text>
-  <text class="t-small" x="706" y="168">   8 s timeout, default vars, MCP, flow</text>
-  <text class="t-small" x="706" y="190">5. Bind ASSISTANT_PHONE_NUMBER to the assistant</text>
+  <text class="t-small" x="706" y="108">3. Create the webhook tools (find by name or create)</text>
+  <text class="t-small" x="706" y="126">4. assembleWorkflow: workflow.json + prompts/*.txt</text>
+  <text class="t-small" x="706" y="140">   + tool ids + calendar snapshot</text>
+  <text class="t-small" x="706" y="158">5. Create or update the assistant: model, webhook URL,</text>
+  <text class="t-small" x="706" y="172">   8 s timeout, default vars, MCP, flow</text>
+  <text class="t-small" x="706" y="190">6. Bind ASSISTANT_PHONE_NUMBER to the assistant</text>
   <text class="t-small" x="706" y="212">chat.ts / eval: text chat, no phone needed</text>
 
   <path class="ar" d="M220 90 L328 70"/>
@@ -473,39 +473,6 @@ svg .b { stroke-width: 1.4; }
 </svg>
 </div>
 
-<!-- ============ 6. NOTES ============ -->
-<h2 id="notes">6 · Gaps found while drawing</h2>
-<p class="sub">I checked each of these against the code. I haven't fixed any of them.</p>
-<div class="grid">
-  <div class="card warn">
-    <h3>/metrics always reports 0 calls</h3>
-    <p><code>handlers/metrics.ts:5</code> reads <code>webhook_calls</code>, but <code>handlers/webhook.ts:28</code> writes only <code>webhook_calls/&lt;phone&gt;</code>. Nothing ever writes the total key.</p>
-  </div>
-  <div class="card warn">
-    <h3>webhook_errors misses real errors</h3>
-    <p>It goes up only on an invalid payload. If the actor or KV throws, the request returns a 500 and the counter doesn't move, and those are the errors the "know within 1 minute" check depends on.</p>
-  </div>
-  <div class="card warn">
-    <h3>Returning-caller data never filled</h3>
-    <p>Nothing calls <code>updateCallerName</code> or <code>setLastBooking</code>, so <code>caller_name</code> is always <code>""</code>. Bookings live in BookingActor and never reach CallSession.</p>
-  </div>
-  <div class="card warn">
-    <h3>Availability ignores existing bookings</h3>
-    <p><code>check_availability</code> (MCP) has no caller and reads no actor, so it offers every slot on the fixed grid, even ones already booked. Two callers can book the same slot. The fix would be a single clinic-wide calendar actor that reserves slots atomically.</p>
-  </div>
-  <div class="card warn">
-    <h3>docs/architecture.md is stale</h3>
-    <p>It still describes an in-memory store keyed by phone, a <code>func.toml</code> for the MCP server, and Confirmation as a speak node. The code uses BookingActor, <code>telnyx.toml</code> with actors, and a prompt node.</p>
-  </div>
-  <div class="card warn">
-    <h3>Tool routes don't verify Telnyx signatures</h3>
-    <p><code>POST /tools/*</code> accepts any request, so anyone who knows a caller id could read or cancel that caller's appointment. Every Telnyx request carries <code>telnyx-signature-ed25519</code> + <code>telnyx-timestamp</code>; verifying them with the account's public key would close it.</p>
-  </div>
-  <div class="card">
-    <h3>Webhook latency budget</h3>
-    <p>Everything runs one after another: 2 actor calls, 3 KV reads and 1 KV write. That fits in 8 s, but it could get close to Telnyx's default of 1.5 s. Running the KV reads in parallel would cut it.</p>
-  </div>
-</div>
 </main>
 </body>
 </html>

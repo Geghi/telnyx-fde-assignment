@@ -25,16 +25,23 @@ edge-functions/
     src/                    # handler code + CallSession actor
     tests/                  # unit tests (mocked bindings)
   mcp-server/               # TypeScript — MCP server with scheduling tools
-    src/                    # tool implementations + in-memory store
-    tests/                  # unit + integration tests
-assistant-voice-agent/      # assistant configuration (not code — JSON + prompts)
+    src/                    # MCP read tools, /tools/<name> webhook-tool routes, BookingActor, store
+    tests/                  # unit tests (mocked bindings)
+assistant-voice-agent/      # assistant configuration + dev tooling
   workflow.json             # conversation workflow definition (API payload)
   prompts/                  # system prompt per node
-  setup.ts                  # script to create assistant + assign phone via API
+  src/                      # workflow assembly, webhook tool definitions, calendar
+  setup.ts                  # registers MCP server + tools, creates/updates the assistant, binds the number
+  buy-number.ts             # buys the dial-in number
+  chat.ts, trace.ts         # text chat with the assistant; print a conversation
+  eval/                     # scripted conversations scored by an LLM judge
 docs/                       # documentation
   adr/                      # architecture decision records (lazy)
   prd/                      # product requirement docs (lazy)
   agents/                   # agent-facing docs (testing, evidence, workflow)
 scripts/                    # dev scripts
+  deploy-all.sh             # ship both edge functions
+  seed-kv.sh                # write business_info + online_booking_enabled to KV
+  list-callbacks.sh         # list call-back requests (GET /callbacks)
   sync-deps.sh              # re-install deps when a lockfile changed
 ```

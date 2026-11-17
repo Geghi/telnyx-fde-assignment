@@ -18,10 +18,10 @@ edge-functions/
     src/              # handler code
     tests/            # unit tests (mocked Request / KV / Actor)
   mcp-server/
-    src/              # MCP server and tool implementations
-    tests/            # unit + integration tests
+    src/              # MCP server, tool routes, BookingActor
+    tests/            # unit tests (mocked Request / KV / Actor)
 assistant-voice-agent/
-  tests/             # tests for the setup script
+  tests/             # workflow assembly, webhook tool definitions, calendar
 ```
 
 Shared fixtures and helpers go in the closest `tests/` to the code under test.
