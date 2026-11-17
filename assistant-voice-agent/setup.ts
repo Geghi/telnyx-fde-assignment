@@ -3,6 +3,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assembleWorkflow } from "./src/assemble-workflow.js";
 import { calendarSnapshot } from "./src/calendar.js";
+import { webhookToolDefinitions } from "./src/webhook-tools.js";
 
 const cal = calendarSnapshot();
 
@@ -63,7 +64,7 @@ const ASSISTANT_INSTRUCTIONS =
   "Do not use bullet points, numbered lists, or markdown. " +
   "Ask ONE question at a time, then wait for the answer. " +
   "Never make up information — use tools. " +
-  "Always tell the caller what you are doing before calling a tool (e.g. 'Let me check our calendar...').\n" +
+  "Only announce before slow operations (check_availability, book_appointment) with a short line like 'Let me check our calendar...'. Do NOT announce before update_booking_draft or get_booking_status — those are silent writes; just call them and respond to the result.\n" +
   `TODAY IS ${cal.weekday}, ${cal.today_date}. This week: ${cal.week_snapshot}. Current month: ${cal.current_month}. Next month: ${cal.next_month}. ` +
   `When the caller says "today" or "asap", use ${cal.today_date} as the date. When they say a weekday like "next Tuesday", look up the date from the week snapshot above. ` +
   `Always pass these exact dates to check_availability — never guess the year or the date.`;
@@ -167,6 +168,29 @@ async function createTransferTool(): Promise<string> {
   return created.id;
 }
 
+// ponytail: find-or-create by display_name; an existing tool keeps its old
+// definition. After changing a definition or MCP_SERVER_URL, delete the tool
+// in the portal (AI Tools) and re-run setup.
+async function createWebhookTools(): Promise<Record<string, string>> {
+  assertEnv("MCP_SERVER_URL", MCP_SERVER_URL);
+  const list = await api("/ai/tools");
+  const existing: { id: string; display_name: string }[] = list.data ?? [];
+  const ids: Record<string, string> = {};
+  for (const def of webhookToolDefinitions(MCP_SERVER_URL)) {
+    const found = existing.find((t) => t.display_name === def.display_name);
+    if (found) {
+      console.log(`Webhook tool already exists: ${def.display_name} (${found.id})`);
+      ids[def.display_name] = found.id;
+      continue;
+    }
+    const created = await api("/ai/tools", { method: "POST", body: def });
+    const id = created.id ?? created.data?.id;
+    console.log(`Webhook tool created: ${def.display_name} (${id})`);
+    ids[def.display_name] = id;
+  }
+  return ids;
+}
+
 async function findAssistant(): Promise<string | null> {
   const list = await api("/ai/assistants");
   const assistants = list.data ?? [];
@@ -176,18 +200,21 @@ async function findAssistant(): Promise<string | null> {
 
 async function createOrUpdateAssistant(
   mcpServerId: string,
-  transferToolId: string
+  transferToolId: string,
+  toolIds: Record<string, string>
 ): Promise<{ id: string; texmlAppId: string | null }> {
   assertEnv("WEBHOOK_URL", WEBHOOK_URL);
   const flow = assembleWorkflow({
     workflowPath: "workflow.json",
     promptsDir: "prompts",
     transferToolId,
+    toolIds,
     calendar: cal,
   });
 
   const body = {
     name: ASSISTANT_NAME,
+    model: "zai-org/GLM-5.3-Flash",
     instructions: ASSISTANT_INSTRUCTIONS,
     dynamic_variables_webhook_url: WEBHOOK_URL,
     dynamic_variables_webhook_timeout_ms: 8000,
@@ -279,11 +306,13 @@ async function main() {
 
   const mcpServerId = await registerMcpServer();
   const transferToolId = await createTransferTool();
-  const assistant = await createOrUpdateAssistant(mcpServerId, transferToolId);
+  const toolIds = await createWebhookTools();
+  const assistant = await createOrUpdateAssistant(mcpServerId, transferToolId, toolIds);
 
   console.log("\n=== Setup complete ===");
   console.log(`MCP server:  ${mcpServerId}`);
   console.log(`Transfer:    ${transferToolId}`);
+  for (const [name, id] of Object.entries(toolIds)) console.log(`Tool:        ${name} → ${id}`);
   console.log(`Assistant:   ${assistant.id}`);
   if (assistant.texmlAppId) console.log(`TeXML app:   ${assistant.texmlAppId}`);
 

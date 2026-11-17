@@ -15,6 +15,7 @@
       "instructions": "{{PROMPT:receptionist}}",
       "instructions_mode": "append",
       "tools_mode": "append",
+      "shared_tool_ids": ["{{TOOL:get_appointment}}"],
       "position": { "x": 300, "y": 80 }
     },
     {
@@ -24,7 +25,25 @@
       "instructions": "{{PROMPT:booking}}",
       "instructions_mode": "append",
       "tools_mode": "append",
+      "shared_tool_ids": ["{{TOOL:update_booking_draft}}", "{{TOOL:get_booking_status}}", "{{TOOL:book_appointment}}"],
       "position": { "x": 560, "y": 0 }
+    },
+    {
+      "type": "prompt",
+      "id": "n_booking_request",
+      "name": "Booking request",
+      "instructions": "{{PROMPT:booking_request}}",
+      "instructions_mode": "append",
+      "tools_mode": "append",
+      "shared_tool_ids": ["{{TOOL:update_booking_draft}}", "{{TOOL:get_booking_status}}", "{{TOOL:save_booking_request}}"],
+      "position": { "x": 560, "y": -160 }
+    },
+    {
+      "type": "speak",
+      "id": "n_callback_confirmation",
+      "name": "Callback confirmation",
+      "message": "{{PROMPT:callback_confirmation}}",
+      "position": { "x": 820, "y": -160 }
     },
     {
       "type": "prompt",
@@ -33,13 +52,15 @@
       "instructions": "{{PROMPT:cancellation}}",
       "instructions_mode": "append",
       "tools_mode": "append",
+      "shared_tool_ids": ["{{TOOL:get_appointment}}", "{{TOOL:cancel_appointment}}"],
       "position": { "x": 560, "y": 160 }
     },
     {
-      "type": "speak",
+      "type": "prompt",
       "id": "n_confirmation",
       "name": "Confirmation",
-      "message": "{{PROMPT:confirmation}}",
+      "instructions": "{{PROMPT:confirmation}}",
+      "instructions_mode": "append",
       "position": { "x": 820, "y": 80 }
     },
     {
@@ -86,13 +107,37 @@
       "id": "e_booking_to_confirmation",
       "start_node_id": "n_booking",
       "target": { "type": "node", "node_id": "n_confirmation" },
-      "condition": { "type": "llm", "prompt": "The booking or callback request has been completed." }
+      "condition": { "type": "llm", "prompt": "The appointment has been booked." }
     },
     {
       "id": "e_booking_to_receptionist",
       "start_node_id": "n_booking",
       "target": { "type": "node", "node_id": "n_receptionist" },
       "condition": { "type": "llm", "prompt": "The caller wants to abandon the booking and do something else." }
+    },
+    {
+      "id": "e_booking_to_booking_request",
+      "start_node_id": "n_booking",
+      "target": { "type": "node", "node_id": "n_booking_request" },
+      "condition": { "type": "expression", "expression": { "type": "comparison", "op": "==", "left": { "type": "variable", "name": "online_booking_enabled" }, "right": { "type": "string_literal", "value": "false" } } }
+    },
+    {
+      "id": "e_booking_request_to_callback_confirmation",
+      "start_node_id": "n_booking_request",
+      "target": { "type": "node", "node_id": "n_callback_confirmation" },
+      "condition": { "type": "llm", "prompt": "The booking request has been saved." }
+    },
+    {
+      "id": "e_booking_request_to_receptionist",
+      "start_node_id": "n_booking_request",
+      "target": { "type": "node", "node_id": "n_receptionist" },
+      "condition": { "type": "llm", "prompt": "The caller wants to abandon the request and do something else." }
+    },
+    {
+      "id": "e_callback_confirmation_to_receptionist",
+      "start_node_id": "n_callback_confirmation",
+      "target": { "type": "node", "node_id": "n_receptionist" },
+      "condition": { "type": "default" }
     },
     {
       "id": "e_cancellation_to_confirmation",
@@ -110,7 +155,7 @@
       "id": "e_confirmation_to_receptionist",
       "start_node_id": "n_confirmation",
       "target": { "type": "node", "node_id": "n_receptionist" },
-      "condition": { "type": "default" }
+      "condition": { "type": "llm", "prompt": "The caller has been told the result and asked if there's anything else." }
     },
     {
       "id": "e_escalation_to_transfer",

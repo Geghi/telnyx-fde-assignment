@@ -32,32 +32,33 @@ describe("assembleWorkflow", () => {
     expect((transfer as { shared_tool_id: string }).shared_tool_id).toBe("tool-transfer-abc");
   });
 
-  it("preserves all 7 nodes with correct types", () => {
+  it("preserves all 9 nodes with correct types", () => {
     const flow = assembleWorkflow({
       workflowPath: "workflow.json",
       promptsDir: "prompts",
       transferToolId: "x",
     });
 
-    expect(flow.nodes).toHaveLength(7);
+    expect(flow.nodes).toHaveLength(9);
     const types = flow.nodes.map((n) => n.type);
     expect(types.filter((t) => t === "speak")).toHaveLength(3);
-    expect(types.filter((t) => t === "prompt")).toHaveLength(3);
+    expect(types.filter((t) => t === "prompt")).toHaveLength(5);
     expect(types.filter((t) => t === "tool")).toHaveLength(1);
   });
 
-  it("preserves all 11 edges with correct conditions", () => {
+  it("preserves all 15 edges with correct conditions", () => {
     const flow = assembleWorkflow({
       workflowPath: "workflow.json",
       promptsDir: "prompts",
       transferToolId: "x",
     });
 
-    expect(flow.edges).toHaveLength(11);
+    expect(flow.edges).toHaveLength(15);
     const defaults = flow.edges.filter((e) => e.condition.type === "default");
     expect(defaults).toHaveLength(4);
     const llm = flow.edges.filter((e) => e.condition.type === "llm");
-    expect(llm).toHaveLength(7);
+    expect(llm).toHaveLength(10);
+    expect(flow.edges.filter((e) => e.condition.type === "expression")).toHaveLength(1);
   });
 
   it("preserves start_node_id", () => {
@@ -119,5 +120,89 @@ describe("assembleWorkflow", () => {
     expect(text).not.toContain("{{current_month}}");
     expect(text).not.toContain("{{next_month}}");
     expect(text).not.toContain("{{weekday}}");
+  });
+
+  describe("per-node tool scoping", () => {
+    const toolIds = {
+      update_booking_draft: "tool-draft",
+      get_booking_status: "tool-status",
+      book_appointment: "tool-book",
+      save_booking_request: "tool-request",
+      get_appointment: "tool-lookup",
+      cancel_appointment: "tool-cancel",
+    };
+    const flow = assembleWorkflow({
+      workflowPath: "workflow.json",
+      promptsDir: "prompts",
+      transferToolId: "x",
+      toolIds,
+    });
+    const node = (id: string) =>
+      flow.nodes.find((n) => n.id === id) as { shared_tool_ids?: string[]; tools_mode?: string };
+
+    it("gives Booking only the booking write tools, appended to the MCP read tools", () => {
+      expect(node("n_booking").shared_tool_ids).toEqual(["tool-draft", "tool-status", "tool-book"]);
+      expect(node("n_booking").tools_mode).toBe("append");
+    });
+
+    it("gives Booking request the draft tools and save_booking_request, never book_appointment", () => {
+      expect(node("n_booking_request").shared_tool_ids).toEqual(["tool-draft", "tool-status", "tool-request"]);
+      expect(node("n_booking_request").tools_mode).toBe("append");
+    });
+
+    it("gives Cancellation the lookup and cancel, appended to the MCP read tools", () => {
+      expect(node("n_cancellation").shared_tool_ids).toEqual(["tool-lookup", "tool-cancel"]);
+      expect(node("n_cancellation").tools_mode).toBe("append");
+    });
+
+    it("gives Receptionist only the read-only appointment lookup", () => {
+      expect(node("n_receptionist").shared_tool_ids).toEqual(["tool-lookup"]);
+      expect(node("n_receptionist").tools_mode).toBe("append");
+    });
+
+    it("gives Confirmation no shared tools", () => {
+      expect(node("n_confirmation").shared_tool_ids).toBeUndefined();
+    });
+
+    it("throws when workflow.json references a tool with no id", () => {
+      expect(() =>
+        assembleWorkflow({
+          workflowPath: "workflow.json",
+          promptsDir: "prompts",
+          transferToolId: "x",
+          toolIds: { update_booking_draft: "a" },
+        })
+      ).toThrow(/references tool "get_appointment" but no id/);
+    });
+  });
+
+  describe("online booking disabled → callback request path", () => {
+    const flow = assembleWorkflow({ workflowPath: "workflow.json", promptsDir: "prompts", transferToolId: "x" });
+    const edge = (from: string, to: string) =>
+      flow.edges.find((e) => e.start_node_id === from && e.target.node_id === to);
+
+    it("routes Booking → Booking request on a variable comparison of online_booking_enabled", () => {
+      expect(edge("n_booking", "n_booking_request")?.condition).toEqual({
+        type: "expression",
+        expression: {
+          type: "comparison",
+          op: "==",
+          left: { type: "variable", name: "online_booking_enabled" },
+          right: { type: "string_literal", value: "false" },
+        },
+      });
+    });
+
+    it("confirms a saved request with a verbatim callback promise, then returns to Receptionist", () => {
+      const speak = flow.nodes.find((n) => n.id === "n_callback_confirmation");
+      expect(speak?.type).toBe("speak");
+      expect(speak?.message?.toLowerCase()).toContain("call you back");
+      expect(edge("n_booking_request", "n_callback_confirmation")?.condition.type).toBe("llm");
+      expect(edge("n_callback_confirmation", "n_receptionist")?.condition.type).toBe("default");
+    });
+
+    it("lets the caller abandon the request back to Receptionist", () => {
+      expect(edge("n_booking_request", "n_receptionist")?.condition.type).toBe("llm");
+    });
   });
 });

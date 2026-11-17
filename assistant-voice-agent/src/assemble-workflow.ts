@@ -15,12 +15,16 @@ export interface FlowNode {
   instructions_mode?: "replace" | "append";
   message?: string;
   shared_tool_id?: string;
+  shared_tool_ids?: string[];
+  tools_mode?: "replace" | "append";
   position?: { x: number; y: number };
 }
 
 export interface FlowEdgeCondition {
   type: "llm" | "expression" | "default";
   prompt?: string;
+  /** Deterministic check, e.g. {type: "comparison", op: "==", left: {type: "variable", name}, right: {type: "string_literal", value}}. */
+  expression?: unknown;
 }
 
 export interface FlowEdge {
@@ -40,6 +44,8 @@ export function assembleWorkflow(args: {
   workflowPath: string;
   promptsDir: string;
   transferToolId: string;
+  /** Shared tool ids by name, resolving `{{TOOL:<name>}}` in `shared_tool_ids`. */
+  toolIds?: Record<string, string>;
   calendar?: CalendarSnapshot;
 }): ConversationFlow {
   const root = resolve(here, "..");
@@ -74,6 +80,9 @@ export function assembleWorkflow(args: {
     if (node.instructions) node.instructions = replacePlaceholders(node.instructions);
     if (node.message) node.message = replacePlaceholders(node.message);
     if (node.shared_tool_id) node.shared_tool_id = replacePlaceholders(node.shared_tool_id);
+    if (node.shared_tool_ids && args.toolIds) {
+      node.shared_tool_ids = node.shared_tool_ids.map((ref) => resolveToolRef(ref, args.toolIds!, node.id));
+    }
     return node;
   });
 
@@ -82,4 +91,12 @@ export function assembleWorkflow(args: {
     nodes,
     edges: raw.edges,
   };
+}
+
+function resolveToolRef(ref: string, toolIds: Record<string, string>, nodeId: string): string {
+  const m = ref.match(/^\{\{TOOL:([\w-]+)\}\}$/);
+  if (!m) return ref;
+  const id = toolIds[m[1]];
+  if (!id) throw new Error(`Node ${nodeId} references tool "${m[1]}" but no id was provided for it`);
+  return id;
 }
