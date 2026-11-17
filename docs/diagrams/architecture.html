@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bright Smile Architecture</title>
+<style>
+:root {
+  --bg: #f7f6f2; --card: #ffffff; --ink: #1d1f24; --ink-2: #555a66; --line: #c9ccd3;
+  --telnyx: #0f7b6c; --telnyx-bg: #e5f3f0;
+  --edge: #3b5bdb; --edge-bg: #e8edfd;
+  --actor: #9c36b5; --actor-bg: #f5e8f9;
+  --kv: #c2410c; --kv-bg: #fdeee5;
+  --tool: #5c6370; --tool-bg: #eef0f3;
+  --warn: #b42318; --warn-bg: #fdecea;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171c; --card: #1e2128; --ink: #e8eaee; --ink-2: #a3a8b4; --line: #3a3f4a;
+    --telnyx: #4fd1b8; --telnyx-bg: #12302b; --edge: #8ea5ff; --edge-bg: #1b2340;
+    --actor: #e09cf0; --actor-bg: #33203a; --kv: #fb9a63; --kv-bg: #3a2418;
+    --tool: #b4bac6; --tool-bg: #2a2e37; --warn: #ff8a80; --warn-bg: #3d1d1b;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171c; --card: #1e2128; --ink: #e8eaee; --ink-2: #a3a8b4; --line: #3a3f4a;
+  --telnyx: #4fd1b8; --telnyx-bg: #12302b; --edge: #8ea5ff; --edge-bg: #1b2340;
+  --actor: #e09cf0; --actor-bg: #33203a; --kv: #fb9a63; --kv-bg: #3a2418;
+  --tool: #b4bac6; --tool-bg: #2a2e37; --warn: #ff8a80; --warn-bg: #3d1d1b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+h2 { font-size: 19px; margin: 48px 0 6px; }
+.sub { color: var(--ink-2); margin: 0 0 12px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+nav a { color: var(--edge); text-decoration: none; border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px 12px; font-size: 13px; background: var(--card); }
+.fig { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px; overflow-x: auto; }
+.fig svg { display: block; width: 100%; min-width: 760px; height: auto; }
+code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--tool-bg); padding: 1px 5px; border-radius: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--ink-2); margin-top: 8px; }
+.legend span::before { content: ""; display: inline-block; width: 11px; height: 11px;
+  border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--c, var(--line));
+  border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.card h3 { margin: 0 0 6px; font-size: 15px; }
+.card p, .card ul { margin: 4px 0; font-size: 13.5px; }
+.card ul { padding-left: 18px; }
+.card.warn { --c: var(--warn); background: var(--warn-bg); }
+.meta { font-size: 12.5px; color: var(--ink-2); }
+
+/* SVG */
+svg text { fill: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 12px; }
+svg .t-title { font-weight: 650; font-size: 13.5px; }
+svg .t-small { font-size: 11px; fill: var(--ink-2); }
+svg .t-mono { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; fill: var(--ink-2); }
+svg .t-zone { font-weight: 700; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+svg .b { stroke-width: 1.4; }
+.z-telnyx { fill: var(--telnyx-bg); stroke: var(--telnyx); }
+.z-edge { fill: var(--edge-bg); stroke: var(--edge); }
+.n-plain { fill: var(--card); stroke: var(--line); }
+.n-telnyx { fill: var(--card); stroke: var(--telnyx); }
+.n-edge { fill: var(--card); stroke: var(--edge); }
+.n-actor { fill: var(--actor-bg); stroke: var(--actor); }
+.n-kv { fill: var(--kv-bg); stroke: var(--kv); }
+.n-tool { fill: var(--tool-bg); stroke: var(--tool); }
+.c-telnyx { fill: var(--telnyx) !important; } .c-edge { fill: var(--edge) !important; }
+.c-actor { fill: var(--actor) !important; } .c-kv { fill: var(--kv) !important; }
+.c-warn { fill: var(--warn) !important; }
+.ar { fill: none; stroke: var(--ink-2); stroke-width: 1.4; marker-end: url(#ah); }
+.ar.dash { stroke-dasharray: 5 4; }
+.ar.edge { stroke: var(--edge); marker-end: url(#ah-edge); }
+.ar.actor { stroke: var(--actor); marker-end: url(#ah-actor); }
+.ar.kv { stroke: var(--kv); marker-end: url(#ah-kv); }
+.ar.telnyx { stroke: var(--telnyx); marker-end: url(#ah-telnyx); }
+.life { stroke: var(--line); stroke-dasharray: 3 4; stroke-width: 1.2; }
+.band { fill: var(--tool-bg); }
+.ah { fill: var(--ink-2); } .ah-edge { fill: var(--edge); } .ah-actor { fill: var(--actor); }
+.ah-kv { fill: var(--kv); } .ah-telnyx { fill: var(--telnyx); }
+.chip-speak { fill: var(--telnyx-bg); stroke: var(--telnyx); }
+.chip-prompt { fill: var(--edge-bg); stroke: var(--edge); }
+.chip-tool { fill: var(--tool-bg); stroke: var(--tool); }
+</style>
+</head>
+<body>
+<main>
+<h1>Bright Smile Dental: AI receptionist architecture</h1>
+<p class="sub">Drawn from the code on <code>main</code> plus the working tree (2026-11-17). Where <code>docs/architecture.md</code> disagrees with the code, the code wins (see <a href="#notes">notes</a>).</p>
+<nav>
+  <a href="#arch">1 · System architecture</a>
+  <a href="#flow">2 · Call flow (booking)</a>
+  <a href="#workflow">3 · Conversation workflow</a>
+  <a href="#state">4 · State &amp; keys</a>
+  <a href="#ops">5 · Deploy &amp; tooling</a>
+  <a href="#notes">6 · Gaps found</a>
+</nav>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-edge" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-edge" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-actor" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-actor" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-kv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-kv" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-telnyx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-telnyx" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<!-- ============ 1. ARCHITECTURE ============ -->
+<h2 id="arch">1 · System architecture</h2>
+<p class="sub">Two managed planes. Telnyx Voice AI runs the phone call, the LLM and the workflow. Two Edge Compute functions hold the business logic and all state.</p>
+<div class="fig">
+<svg viewBox="0 0 1000 540" role="img" aria-label="System architecture">
+  <!-- Caller + front desk -->
+  <rect class="n-plain b" x="16" y="210" width="140" height="66" rx="10"/>
+  <text class="t-title" x="86" y="238" text-anchor="middle">📞 Caller</text>
+  <text class="t-small" x="86" y="256" text-anchor="middle">PSTN / phone</text>
+
+  <rect class="n-plain b" x="16" y="420" width="140" height="62" rx="10"/>
+  <text class="t-title" x="86" y="446" text-anchor="middle">Front desk</text>
+  <text class="t-small" x="86" y="464" text-anchor="middle">FRONT_DESK_NUMBER</text>
+
+  <!-- Telnyx zone -->
+  <rect class="z-telnyx b" x="190" y="20" width="340" height="500" rx="14"/>
+  <text class="t-zone c-telnyx" x="208" y="44">Telnyx Voice AI · managed</text>
+
+  <rect class="n-telnyx b" x="208" y="60" width="304" height="46" rx="8"/>
+  <text class="t-title" x="222" y="80">Phone number</text>
+  <text class="t-small" x="222" y="96">ASSISTANT_PHONE_NUMBER → assistant's TeXML app</text>
+
+  <rect class="n-telnyx b" x="208" y="122" width="304" height="268" rx="10"/>
+  <text class="t-title" x="222" y="144">AI Assistant “Sarah”</text>
+  <text class="t-small" x="222" y="161">LLM zai-org/GLM-5.3-Flash · STT/TTS · telephony</text>
+  <text class="t-small" x="222" y="177">dynamic_variables (filled once per call)</text>
+  <text class="t-small" x="222" y="193">mcp_servers: [bright-smile-dental-mcp]</text>
+
+  <text class="t-small" x="222" y="218" style="font-weight:600;fill:var(--ink)">Conversation workflow (9 nodes)</text>
+  <rect class="chip-speak" x="222" y="228" width="84" height="24" rx="6"/><text x="264" y="244" text-anchor="middle">Greeting</text>
+  <rect class="chip-prompt" x="314" y="228" width="98" height="24" rx="6"/><text x="363" y="244" text-anchor="middle">Receptionist</text>
+  <rect class="chip-prompt" x="420" y="228" width="80" height="24" rx="6"/><text x="460" y="244" text-anchor="middle">Booking</text>
+  <rect class="chip-prompt" x="222" y="260" width="98" height="24" rx="6"/><text x="271" y="276" text-anchor="middle">Cancellation</text>
+  <rect class="chip-prompt" x="328" y="260" width="98" height="24" rx="6"/><text x="377" y="276" text-anchor="middle">Confirmation</text>
+  <rect class="chip-speak" x="222" y="292" width="92" height="24" rx="6"/><text x="268" y="308" text-anchor="middle">Escalation</text>
+  <rect class="chip-tool" x="322" y="292" width="80" height="24" rx="6"/><text x="362" y="308" text-anchor="middle">Transfer</text>
+  <rect class="chip-prompt" x="434" y="260" width="66" height="24" rx="6"/><text x="467" y="276" text-anchor="middle">Request</text>
+  <rect class="chip-speak" x="410" y="292" width="90" height="24" rx="6"/><text x="455" y="308" text-anchor="middle">Callback</text>
+  <text class="t-small" x="222" y="340">speak = verbatim · prompt = LLM turn</text>
+  <text class="t-small" x="222" y="356">tool = deterministic shared tool</text>
+  <text class="t-small" x="222" y="376">Routing: LLM edges exposed as transition__&lt;edge_id&gt;</text>
+
+  <rect class="n-tool b" x="208" y="410" width="304" height="58" rx="8"/>
+  <text class="t-title" x="222" y="432">Shared “transfer” tool</text>
+  <text class="t-small" x="222" y="450">from {{telnyx_agent_target}} → Front Desk</text>
+
+  <text class="t-small" x="208" y="500">Configured by assistant-voice-agent/setup.ts</text>
+
+  <!-- Edge zone -->
+  <rect class="z-edge b" x="568" y="20" width="416" height="500" rx="14"/>
+  <text class="t-zone c-edge" x="586" y="44">Telnyx Edge Compute · TypeScript</text>
+
+  <rect class="n-edge b" x="600" y="64" width="180" height="120" rx="10"/>
+  <text class="t-title" x="614" y="86">webhook</text>
+  <text class="t-mono" x="614" y="106">POST /  → dynamic vars</text>
+  <text class="t-mono" x="614" y="122">GET /metrics</text>
+  <text class="t-mono" x="614" y="138">GET /health</text>
+  <text class="t-small" x="614" y="162">structured JSON log / call</text>
+
+  <rect class="n-actor b" x="806" y="64" width="162" height="120" rx="10"/>
+  <text class="t-title c-actor" x="818" y="86">CallSession actor</text>
+  <text class="t-mono" x="818" y="106">key caller:+&lt;phone&gt;</text>
+  <text class="t-small" x="818" y="126">totalCalls</text>
+  <text class="t-small" x="818" y="142">callerName, lastBookingId</text>
+  <text class="t-small" x="818" y="166">lives across calls</text>
+
+  <rect class="n-edge b" x="600" y="214" width="180" height="150" rx="10"/>
+  <text class="t-title" x="614" y="236">mcp-server</text>
+  <text class="t-mono" x="614" y="256">MCP Streamable HTTP</text>
+  <text class="t-mono" x="614" y="272">+ POST /tools/&lt;name&gt;</text>
+  <text class="t-small" x="614" y="294">MCP, read-only, global:</text>
+  <text class="t-small" x="614" y="310">· info, services, availability</text>
+  <text class="t-small" x="614" y="326">Webhook tools, node-scoped:</text>
+  <text class="t-small" x="614" y="342">· draft, book, request, cancel</text>
+
+  <rect class="n-actor b" x="806" y="214" width="162" height="150" rx="10"/>
+  <text class="t-title c-actor" x="818" y="236">BookingActor</text>
+  <text class="t-mono" x="818" y="256">key caller:+&lt;phone&gt;</text>
+  <text class="t-small" x="818" y="278">draft {reason, preferredDate,</text>
+  <text class="t-small" x="818" y="292">  slot, name}</text>
+  <text class="t-small" x="818" y="308">booking, bookingCounter</text>
+  <text class="t-small" x="818" y="332">single-threaded → serialises</text>
+  <text class="t-small" x="818" y="346">parallel tool calls</text>
+
+  <rect class="n-kv b" x="600" y="398" width="368" height="104" rx="10"/>
+  <text class="t-title c-kv" x="614" y="420">CLINIC_KV · shared namespace</text>
+  <text class="t-mono" x="614" y="440">online_booking_enabled   "true"|"false"</text>
+  <text class="t-mono" x="614" y="456">business_info            {name,hours,…,services[]}</text>
+  <text class="t-mono" x="614" y="472">webhook_calls/&lt;phone&gt;    counter</text>
+  <text class="t-mono" x="614" y="488">webhook_errors           counter</text>
+
+  <!-- Arrows -->
+  <path class="ar" d="M156 236 C180 236 180 84 206 84"/>
+  <text class="t-small" x="128" y="150">voice</text>
+  <path class="ar telnyx" d="M360 106 L360 120"/>
+
+  <path class="ar edge" d="M512 150 L598 112"/>
+  <text class="t-small" x="520" y="122" style="fill:var(--edge)">① init</text>
+  <path class="ar edge dash" d="M598 140 L512 176"/>
+  <text class="t-small" x="530" y="182" style="fill:var(--edge)">vars</text>
+
+  <path class="ar edge" d="M512 300 L598 290"/>
+  <text class="t-small" x="518" y="288" style="fill:var(--edge)">② MCP reads</text>
+  <text class="t-small" x="518" y="318" style="fill:var(--edge)">+ webhook writes</text>
+
+  <path class="ar actor" d="M780 124 L804 124"/>
+  <path class="ar actor" d="M780 290 L804 290"/>
+
+  <path class="ar kv" d="M600 172 L586 172 L586 440 L598 440"/>
+  <path class="ar kv" d="M690 364 L690 396"/>
+  <text class="t-small" x="696" y="384" style="fill:var(--kv)">business_info (cached per instance)</text>
+
+  <path class="ar telnyx" d="M360 390 L360 408"/>
+  <path class="ar" d="M208 448 L158 450"/>
+  <text class="t-small" x="160" y="440">③</text>
+</svg>
+</div>
+<div class="legend">
+  <span style="--c:var(--telnyx)">Telnyx managed (configured via REST)</span>
+  <span style="--c:var(--edge)">Our edge functions</span>
+  <span style="--c:var(--actor)">Stateful Actors</span>
+  <span style="--c:var(--kv)">KV</span>
+</div>
+
+<!-- ============ 2. CALL FLOW ============ -->
+<h2 id="flow">2 · Call flow: a booking call, end to end</h2>
+<p class="sub">The webhook runs <b>once</b>, at call start. After that, reads go to MCP. Writes go to scoped webhook tools: Telnyx adds <code>caller_phone</code> as a preset field the LLM never sees, and the route opens that caller's BookingActor.</p>
+<div class="fig">
+<svg viewBox="0 0 1000 900" role="img" aria-label="Booking call sequence">
+  <!-- lane headers -->
+  <g>
+    <rect class="n-plain b" x="20" y="14" width="100" height="40" rx="8"/><text class="t-title" x="70" y="39" text-anchor="middle">Caller</text>
+    <rect class="n-telnyx b" x="150" y="14" width="130" height="40" rx="8"/><text class="t-title" x="215" y="32" text-anchor="middle">Assistant</text><text class="t-small" x="215" y="47" text-anchor="middle">Sarah + workflow</text>
+    <rect class="n-edge b" x="320" y="14" width="110" height="40" rx="8"/><text class="t-title" x="375" y="39" text-anchor="middle">webhook</text>
+    <rect class="n-actor b" x="460" y="14" width="110" height="40" rx="8"/><text class="t-title" x="515" y="39" text-anchor="middle">CallSession</text>
+    <rect class="n-kv b" x="600" y="14" width="90" height="40" rx="8"/><text class="t-title" x="645" y="39" text-anchor="middle">KV</text>
+    <rect class="n-edge b" x="720" y="14" width="110" height="40" rx="8"/><text class="t-title" x="775" y="39" text-anchor="middle">mcp-server</text>
+    <rect class="n-actor b" x="860" y="14" width="120" height="40" rx="8"/><text class="t-title" x="920" y="39" text-anchor="middle">BookingActor</text>
+  </g>
+  <line class="life" x1="70" y1="54" x2="70" y2="890"/>
+  <line class="life" x1="215" y1="54" x2="215" y2="890"/>
+  <line class="life" x1="375" y1="54" x2="375" y2="890"/>
+  <line class="life" x1="515" y1="54" x2="515" y2="890"/>
+  <line class="life" x1="645" y1="54" x2="645" y2="890"/>
+  <line class="life" x1="775" y1="54" x2="775" y2="890"/>
+  <line class="life" x1="920" y1="54" x2="920" y2="890"/>
+
+  <!-- Phase A -->
+  <rect class="band" x="10" y="66" width="980" height="22" rx="4"/>
+  <text class="t-zone" x="20" y="82">A · Call setup (once per call, timeout 8 s)</text>
+
+  <path class="ar" d="M70 108 L213 108"/><text x="78" y="102">dials clinic number</text>
+  <path class="ar edge" d="M215 136 L373 136"/><text x="222" y="130">POST assistant.initialization</text>
+  <text class="t-mono" x="222" y="150">telnyx_end_user_target, call_control_id</text>
+  <path class="ar actor" d="M375 176 L513 176"/><text x="382" y="170">getOrCreate()</text>
+  <path class="ar actor" d="M375 204 L513 204"/><text x="382" y="198">recordCall() totalCalls++</text>
+  <path class="ar kv" d="M375 232 L643 232"/><text x="382" y="226">get online_booking_enabled, business_info</text>
+  <path class="ar kv" d="M375 260 L643 260"/><text x="382" y="254">get/put webhook_calls/&lt;phone&gt; (+1)</text>
+  <path class="ar edge dash" d="M375 290 L217 290"/><text x="222" y="284">{dynamic_variables}</text>
+  <text class="t-mono" x="222" y="304">caller_phone, caller_name, online_booking_enabled,</text>
+  <text class="t-mono" x="222" y="318">clinic_hours, today_date, weekday, week_snapshot…</text>
+
+  <!-- Phase B -->
+  <rect class="band" x="10" y="334" width="980" height="22" rx="4"/>
+  <text class="t-zone" x="20" y="350">B · Greeting (speak) → Receptionist (prompt)</text>
+  <path class="ar telnyx" d="M215 376 L72 376"/><text x="80" y="370">“Thank you for calling… may be recorded…”</text>
+  <path class="ar" d="M70 404 L213 404"/><text x="78" y="398">“I need a cleaning”</text>
+  <rect class="n-telnyx b" x="226" y="414" width="300" height="24" rx="6"/>
+  <text class="t-small" x="236" y="430">LLM calls transition__e_receptionist_to_booking</text>
+
+  <!-- Phase C -->
+  <rect class="band" x="10" y="452" width="980" height="22" rx="4"/>
+  <text class="t-zone" x="20" y="468">C · Booking node: multi-turn, each step persisted in the actor</text>
+  <path class="ar edge" d="M215 494 L773 494"/><text x="222" y="488">get_booking_status · webhook POST /tools/… + preset caller_phone</text>
+  <path class="ar actor" d="M775 512 L918 512"/><text x="782" y="506" class="t-small">idFromName(caller:+phone)</text>
+  <path class="ar edge" d="M215 544 L773 544"/><text x="222" y="538">update_booking_draft(reason), (preferredDate)</text>
+  <path class="ar actor" d="M775 562 L918 562"/><text x="782" y="556" class="t-small">updateDraft → next_step</text>
+  <path class="ar edge" d="M215 594 L773 594"/><text x="222" y="588">check_availability(date)</text>
+  <path class="ar actor" d="M775 612 L918 612"/><text x="782" y="606" class="t-small">getBookedSlotForDate</text>
+  <path class="ar edge dash" d="M773 632 L217 632"/><text x="400" y="626">slots: 8 fixed times, Sun closed, Sat &lt; 15:00, today +1 h</text>
+  <path class="ar telnyx" d="M215 660 L72 660"/><text x="80" y="654">“First opening is 2 PM with Dr. Patel”</text>
+  <path class="ar" d="M70 686 L213 686"/><text x="78" y="680">“OK. I'm Jane.”</text>
+  <path class="ar edge" d="M215 712 L773 712"/><text x="222" y="706">update_booking_draft(slot), (name) → next_step: book</text>
+  <path class="ar edge" d="M215 742 L773 742"/><text x="222" y="736">book_appointment</text>
+  <path class="ar actor" d="M775 760 L918 760"/><text x="782" y="754" class="t-small">createBooking → BK-0001</text>
+  <path class="ar edge dash" d="M773 780 L217 780"/><text x="400" y="774">{booking_id, date, time, dentist}, draft cleared</text>
+
+  <!-- Phase D -->
+  <rect class="band" x="10" y="798" width="980" height="22" rx="4"/>
+  <text class="t-zone" x="20" y="814">D · Confirmation (prompt) → back to Receptionist</text>
+  <path class="ar telnyx" d="M215 842 L72 842"/><text x="80" y="836">“Booked for today at 2 PM with Dr. Patel. Anything else?”</text>
+  <text class="t-small" x="226" y="872">Cancel / emergency: Receptionist → Cancellation, or → Escalation → Transfer (§3)</text>
+</svg>
+</div>
+
+<!-- ============ 3. WORKFLOW ============ -->
+<h2 id="workflow">3 · Conversation workflow (<code>workflow.json</code>)</h2>
+<p class="sub">9 nodes, 15 edges (the request path is drawn separately below). Prompt nodes have no default edge: the call stays on the node until the LLM picks a transition. Prompts come from <code>prompts/*.txt</code>, injected by <code>assemble-workflow.ts</code>.</p>
+<div class="fig">
+<svg viewBox="0 0 1000 470" role="img" aria-label="Workflow graph">
+  <!-- nodes -->
+  <rect class="chip-speak b" x="20" y="200" width="130" height="60" rx="10"/>
+  <text class="t-title" x="85" y="226" text-anchor="middle">Greeting</text><text class="t-small" x="85" y="244" text-anchor="middle">speak · start</text>
+
+  <rect class="chip-prompt b" x="230" y="190" width="160" height="80" rx="10"/>
+  <text class="t-title" x="310" y="216" text-anchor="middle">Receptionist</text><text class="t-small" x="310" y="234" text-anchor="middle">prompt · intent + FAQ</text>
+  <text class="t-small" x="310" y="254" text-anchor="middle">scoped: get_appointment</text>
+
+  <rect class="chip-prompt b" x="500" y="40" width="190" height="80" rx="10"/>
+  <text class="t-title" x="595" y="66" text-anchor="middle">Booking</text><text class="t-small" x="595" y="84" text-anchor="middle">prompt · progressive draft</text>
+  <text class="t-small" x="595" y="104" text-anchor="middle">scoped: draft, status, book</text>
+
+  <rect class="chip-prompt b" x="500" y="190" width="190" height="80" rx="10"/>
+  <text class="t-title" x="595" y="216" text-anchor="middle">Cancellation</text><text class="t-small" x="595" y="234" text-anchor="middle">prompt · confirm, then cancel</text>
+  <text class="t-small" x="595" y="254" text-anchor="middle">scoped: lookup, then cancel</text>
+
+  <rect class="chip-speak b" x="500" y="350" width="190" height="60" rx="10"/>
+  <text class="t-title" x="595" y="376" text-anchor="middle">Escalation</text><text class="t-small" x="595" y="394" text-anchor="middle">speak · “connecting you…”</text>
+
+  <rect class="chip-prompt b" x="800" y="115" width="180" height="80" rx="10"/>
+  <text class="t-title" x="890" y="141" text-anchor="middle">Confirmation</text><text class="t-small" x="890" y="159" text-anchor="middle">prompt · reads last tool result</text>
+  <text class="t-small" x="890" y="177" text-anchor="middle">“anything else?”</text>
+
+  <rect class="chip-tool b" x="800" y="350" width="180" height="60" rx="10"/>
+  <text class="t-title" x="890" y="376" text-anchor="middle">Transfer</text><text class="t-small" x="890" y="394" text-anchor="middle">tool · shared transfer tool</text>
+
+  <!-- edges -->
+  <path class="ar" d="M150 230 L228 230"/><text class="t-small" x="160" y="222">default</text>
+
+  <path class="ar edge" d="M390 210 C440 210 450 90 498 90"/><text class="t-small" x="400" y="128" style="fill:var(--edge)">book / reschedule</text>
+  <path class="ar edge" d="M390 230 L498 230"/><text class="t-small" x="420" y="222" style="fill:var(--edge)">cancel</text>
+  <path class="ar edge" d="M390 252 C440 252 450 380 498 380"/><text class="t-small" x="400" y="340" style="fill:var(--edge)">human / emergency</text>
+
+  <path class="ar edge" d="M690 80 C750 80 760 140 798 145"/><text class="t-small" x="724" y="74" style="fill:var(--edge)">done</text>
+  <path class="ar edge" d="M690 230 C750 230 760 175 798 170"/><text class="t-small" x="724" y="244" style="fill:var(--edge)">done</text>
+
+  <path class="ar edge dash" d="M540 120 C520 160 420 170 380 188"/><text class="t-small" x="440" y="160" style="fill:var(--edge)">abandon</text>
+  <path class="ar edge dash" d="M560 270 C540 300 400 300 360 272"/><text class="t-small" x="420" y="298" style="fill:var(--edge)">abandon</text>
+
+  <path class="ar edge" d="M890 115 C890 10 320 10 310 188"/><text class="t-small" x="560" y="24" style="fill:var(--edge)">told result → back to Receptionist (LLM edge)</text>
+
+  <path class="ar" d="M690 380 L798 380"/><text class="t-small" x="718" y="372">default</text>
+  <path class="ar dash" d="M890 410 C890 460 300 460 300 272"/><text class="t-small" x="520" y="452">default → Receptionist if transfer fails</text>
+</svg>
+</div>
+<div class="legend">
+  <span style="--c:var(--telnyx)">speak (verbatim)</span>
+  <span style="--c:var(--edge)">prompt (LLM) / LLM-condition edge</span>
+  <span style="--c:var(--tool)">tool node / default edge</span>
+</div>
+<p class="meta">Every prompt node sees the 3 read-only MCP tools, because Telnyx attaches MCP servers to the whole assistant. The per-caller tools are shared webhook tools, listed in <code>shared_tool_ids</code> with <code>tools_mode: "append"</code>: Receptionist gets <code>get_appointment</code>; Booking gets draft, status, <code>book_appointment</code>; Booking request gets draft, status, <code>save_booking_request</code>; Cancellation gets <code>get_appointment</code> + <code>cancel_appointment</code>.</p>
+
+<h3 style="margin:24px 0 6px;font-size:15px">Request path: online booking disabled</h3>
+<p class="sub">The only variable-comparison edge. It sits on Booking and is evaluated before the model's turn, so with the flag off the call never reaches a node that has <code>book_appointment</code>.</p>
+<div class="fig">
+<svg viewBox="0 0 1000 215" role="img" aria-label="Callback request path">
+  <rect class="chip-prompt b" x="20" y="60" width="160" height="70" rx="10"/>
+  <text class="t-title" x="100" y="88" text-anchor="middle">Booking</text><text class="t-small" x="100" y="106" text-anchor="middle">entered from Receptionist</text>
+
+  <rect class="chip-prompt b" x="330" y="50" width="200" height="90" rx="10"/>
+  <text class="t-title" x="430" y="76" text-anchor="middle">Booking request</text><text class="t-small" x="430" y="94" text-anchor="middle">prompt · reason, date, name</text>
+  <text class="t-small" x="430" y="112" text-anchor="middle">scoped: draft, status,</text><text class="t-small" x="430" y="126" text-anchor="middle">save_booking_request</text>
+
+  <rect class="chip-speak b" x="630" y="50" width="200" height="90" rx="10"/>
+  <text class="t-title" x="730" y="76" text-anchor="middle">Callback confirmation</text><text class="t-small" x="730" y="94" text-anchor="middle">speak · “They'll call you back</text><text class="t-small" x="730" y="108" text-anchor="middle">as soon as possible…”</text>
+
+  <rect class="chip-prompt b" x="880" y="60" width="104" height="70" rx="10"/>
+  <text class="t-title" x="932" y="100" text-anchor="middle">Receptionist</text>
+
+  <path class="ar edge" d="M180 95 L328 95"/><text class="t-small" x="190" y="86" style="fill:var(--edge)">online_booking_enabled</text><text class="t-small" x="216" y="113" style="fill:var(--edge)">== "false"</text>
+  <path class="ar edge" d="M530 95 L628 95"/><text class="t-small" x="560" y="86" style="fill:var(--edge)">saved</text>
+  <path class="ar" d="M830 95 L878 95"/><text class="t-small" x="834" y="86">default</text>
+  <path class="ar edge dash" d="M430 140 C430 185 932 185 932 132"/><text class="t-small" x="660" y="200" style="fill:var(--edge)">abandon</text>
+</svg>
+</div>
+<p class="meta">The server enforces it too: <code>book_appointment</code> reads the flag from KV on every call and refuses when it is <code>"false"</code>, so flipping the flag mid-call can't sneak a booking through. Saved requests go to a clinic-wide <code>BookingActor</code> instance (<code>clinic:callbacks</code>) that staff read with <code>GET /callbacks</code> (Bearer <code>STAFF_TOKEN</code>).</p>
+
+<!-- ============ 4. STATE ============ -->
+<h2 id="state">4 · Where state lives</h2>
+<p class="sub">Three places, three lifetimes. Both functions read the same KV namespace (<code>82be9f48…</code>).</p>
+<div class="grid">
+  <div class="card" style="--c:var(--actor)">
+    <h3>CallSession actor <span class="meta">webhook</span></h3>
+    <p><code>caller:+&lt;phone&gt;</code>, one per caller, persists across calls</p>
+    <ul><li><code>totalCalls</code>: written by the webhook on every call</li>
+    <li><code>callerName</code>, <code>lastBookingId</code>: nobody writes these (see §6)</li></ul>
+  </div>
+  <div class="card" style="--c:var(--actor)">
+    <h3>BookingActor <span class="meta">mcp-server</span></h3>
+    <p><code>caller:+&lt;phone&gt;</code>, one per caller, persists across calls (book on one call, cancel on the next)</p>
+    <ul><li><code>draft</code>: fields filled in order reason → preferredDate → slot → name</li>
+    <li><code>booking</code> → <code>BK-0001</code>, or <code>request</code> → <code>RQ-0001</code> when online booking is off</li>
+    <li>Single-threaded, so parallel tool calls can't overwrite each other</li></ul>
+  </div>
+  <div class="card" style="--c:var(--actor)">
+    <h3>Callback queue <span class="meta">mcp-server</span></h3>
+    <p>The same <code>BookingActor</code> class, one clinic-wide instance <code>clinic:callbacks</code></p>
+    <ul><li>One entry per caller; a new request replaces the old one, cancelling removes it</li>
+    <li>An actor, not KV: concurrent appends are serialised instead of overwriting each other</li>
+    <li>Read by staff: <code>GET /callbacks</code> with <code>Authorization: Bearer STAFF_TOKEN</code></li></ul>
+  </div>
+  <div class="card" style="--c:var(--kv)">
+    <h3>CLINIC_KV</h3>
+    <ul><li><code>business_info</code>: clinic config, the one source for both functions (seeded by <code>seed-kv.sh</code>)</li>
+    <li><code>online_booking_enabled</code>: feature flag, defaults to <code>"true"</code></li>
+    <li><code>webhook_calls/&lt;phone&gt;</code>, <code>webhook_errors</code>: observability counters</li></ul>
+  </div>
+  <div class="card" style="--c:var(--edge)">
+    <h3>In-process (mcp-server)</h3>
+    <ul><li>Business info and services cached at module level per instance, never refreshed</li>
+    <li>A new <code>Store</code> per request. MCP reads use no actor. Without an actor binding it falls back to in-memory Maps, used by tests only</li></ul>
+  </div>
+  <div class="card" style="--c:var(--telnyx)">
+    <h3>Dynamic variables <span class="meta">Telnyx</span></h3>
+    <ul><li>Set once by the webhook and fixed for the whole call</li>
+    <li>Defaults in <code>setup.ts</code> apply if the webhook fails or times out</li></ul>
+  </div>
+</div>
+
+<!-- ============ 5. OPS ============ -->
+<h2 id="ops">5 · Deploy &amp; local tooling</h2>
+<div class="fig">
+<svg viewBox="0 0 1000 250" role="img" aria-label="Deploy and tooling">
+  <rect class="n-plain b" x="20" y="20" width="200" height="210" rx="12"/>
+  <text class="t-title" x="36" y="44">Developer laptop</text>
+  <text class="t-mono" x="36" y="66">.env.local (TELNYX_API_KEY…)</text>
+  <text class="t-small" x="36" y="94">scripts/deploy-all.sh</text>
+  <text class="t-small" x="36" y="114">scripts/seed-kv.sh</text>
+  <text class="t-small" x="36" y="140">npm run buy-number</text>
+  <text class="t-small" x="36" y="160">npm run setup</text>
+  <text class="t-small" x="36" y="186">chat.ts · trace.ts</text>
+  <text class="t-small" x="36" y="206">eval/runner.ts (LLM judge)</text>
+
+  <rect class="z-edge b" x="330" y="20" width="250" height="100" rx="10"/>
+  <text class="t-title c-edge" x="346" y="44">telnyx-edge CLI</text>
+  <text class="t-small" x="346" y="66">ship webhook, ship mcp-server</text>
+  <text class="t-small" x="346" y="84">(telnyx.toml: actors + KV binding)</text>
+  <text class="t-small" x="346" y="104">storage kv key put business_info…</text>
+
+  <rect class="z-telnyx b" x="330" y="140" width="250" height="90" rx="10"/>
+  <text class="t-title c-telnyx" x="346" y="164">Telnyx REST api.telnyx.com/v2</text>
+  <text class="t-small" x="346" y="184">/ai/mcp_servers · /ai/tools · /ai/assistants</text>
+  <text class="t-small" x="346" y="202">/phone_numbers (buy + bind)</text>
+  <text class="t-small" x="346" y="220">/ai/conversations · /ai/assistants/:id/chat</text>
+
+  <rect class="n-plain b" x="690" y="20" width="290" height="210" rx="12"/>
+  <text class="t-title" x="706" y="44">What setup.ts does (idempotent)</text>
+  <text class="t-small" x="706" y="70">1. Register MCP server URL (find by name or create)</text>
+  <text class="t-small" x="706" y="92">2. Create the shared transfer tool → FRONT_DESK_NUMBER</text>
+  <text class="t-small" x="706" y="114">3. assembleWorkflow: workflow.json + prompts/*.txt</text>
+  <text class="t-small" x="706" y="130">   + transfer tool id + calendar snapshot</text>
+  <text class="t-small" x="706" y="152">4. Create or update the assistant: model, webhook URL,</text>
+  <text class="t-small" x="706" y="168">   8 s timeout, default vars, MCP, flow</text>
+  <text class="t-small" x="706" y="190">5. Bind ASSISTANT_PHONE_NUMBER to the assistant</text>
+  <text class="t-small" x="706" y="212">chat.ts / eval: text chat, no phone needed</text>
+
+  <path class="ar" d="M220 90 L328 70"/>
+  <path class="ar" d="M220 160 L328 180"/>
+  <path class="ar" d="M580 125 L688 125"/>
+</svg>
+</div>
+
+<!-- ============ 6. NOTES ============ -->
+<h2 id="notes">6 · Gaps found while drawing</h2>
+<p class="sub">I checked each of these against the code. I haven't fixed any of them.</p>
+<div class="grid">
+  <div class="card warn">
+    <h3>/metrics always reports 0 calls</h3>
+    <p><code>handlers/metrics.ts:5</code> reads <code>webhook_calls</code>, but <code>handlers/webhook.ts:28</code> writes only <code>webhook_calls/&lt;phone&gt;</code>. Nothing ever writes the total key.</p>
+  </div>
+  <div class="card warn">
+    <h3>webhook_errors misses real errors</h3>
+    <p>It goes up only on an invalid payload. If the actor or KV throws, the request returns a 500 and the counter doesn't move, and those are the errors the "know within 1 minute" check depends on.</p>
+  </div>
+  <div class="card warn">
+    <h3>Returning-caller data never filled</h3>
+    <p>Nothing calls <code>updateCallerName</code> or <code>setLastBooking</code>, so <code>caller_name</code> is always <code>""</code>. Bookings live in BookingActor and never reach CallSession.</p>
+  </div>
+  <div class="card warn">
+    <h3>Availability ignores existing bookings</h3>
+    <p><code>check_availability</code> (MCP) has no caller and reads no actor, so it offers every slot on the fixed grid, even ones already booked. Two callers can book the same slot. The fix would be a single clinic-wide calendar actor that reserves slots atomically.</p>
+  </div>
+  <div class="card warn">
+    <h3>docs/architecture.md is stale</h3>
+    <p>It still describes an in-memory store keyed by phone, a <code>func.toml</code> for the MCP server, and Confirmation as a speak node. The code uses BookingActor, <code>telnyx.toml</code> with actors, and a prompt node.</p>
+  </div>
+  <div class="card warn">
+    <h3>Tool routes don't verify Telnyx signatures</h3>
+    <p><code>POST /tools/*</code> accepts any request, so anyone who knows a caller id could read or cancel that caller's appointment. Every Telnyx request carries <code>telnyx-signature-ed25519</code> + <code>telnyx-timestamp</code>; verifying them with the account's public key would close it.</p>
+  </div>
+  <div class="card">
+    <h3>Webhook latency budget</h3>
+    <p>Everything runs one after another: 2 actor calls, 3 KV reads and 1 KV write. That fits in 8 s, but it could get close to Telnyx's default of 1.5 s. Running the KV reads in parallel would cut it.</p>
+  </div>
+</div>
+</main>
+</body>
+</html>

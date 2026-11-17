@@ -228,3 +228,146 @@ This forces esbuild to keep `BookingActor` in the bundle. Re-shipping printed th
 The webhook's `index.ts` already had `export { CallSession } from "./actor/call-session.js";` — that's why `CallSession` shipped fine and `BookingActor` didn't.
 
 **Lesson:** With `sideEffects: false`, an exported class is tree-shaken unless something actually imports it. For Telnyx StatefulActors, the entrypoint must re-export the class so the platform can see it and wire the function as its owner. `actors list` is the fast check: `registered` with `-` owner means the class never made it into the bundle.
+
+## 22. Prompt-edge deadlock: booking node never transitioned to confirmation (long silence + caller hung up)
+
+**Symptom:** Real call `25bdb007-f1ce-40cf-ae88-d2427cc7fe3a` (2026-11-17 09:44). Caller booked a tooth extraction with Dr. Lee at 1 PM. After `book_appointment` returned `confirmed:true`, the assistant said "One moment while I finalize that for you.", then 12 s of silence, then "Thank you for your patience, Giacomo." Caller asked "So what happened?", assistant finally gave the real confirmation ("Your appointment is booked for today at 1:00 PM with Dr. Lee..."), caller replied "No. No. Thank you. Bye." and hung up. The `n_booking -> n_confirmation` flow transition fired at 09:46:17 — **one second after the caller hung up**. The static `n_confirmation` speak never reached anyone.
+
+**Root cause:** Prompt-edge contradiction.
+- `prompts/booking.txt:20` said: *"After book_appointment returns success, DO NOT confirm or summarize the booking yourself. A separate confirmation message will play automatically. Just stay silent, or say 'give me one moment' if you must speak. Never say 'your appointment is confirmed' or 'is there anything else' — that is the next node's job, not yours."*
+- `workflow.json:86-90` edge `e_booking_to_confirmation` is an **LLM judge** with prompt `"The booking or callback request has been completed."` — the judge reads the assistant's reply and fires the transition only if the reply expresses completion.
+
+The model obeyed the prompt and hedged ("One moment while I finalize that for you.", "Thank you for your patience, Giacomo."). The LLM judge read those hedged replies against "The booking has been completed" and said no — so the edge never fired. The deadlock only broke when the caller's confused "So what happened?" forced the model to break its own prompt and emit a real confirmation; by then the caller had already hung up.
+
+**Investigation path (now baked into `docs/debug-conversation.md`):**
+1. `GET /ai/conversations?page[size]=10` → newest conversation id. **Read `metadata.flow_transitions` first** — it's the timeline of which workflow nodes fired and when. The late transition was visible there immediately and pointed the bug at the edge, not at any tool call.
+2. `npm run trace <id>` — but `trace.ts:43` omitted `page[size]`, so the API defaulted to 20 messages (the call had 35). Re-fetched with `page[size]=100` (the API rejects 200 with `10015`) and reversed to get chronology.
+3. Matched the dead turn to `n_booking`; read `prompts/booking.txt:20` next to `workflow.json`'s edge `e_booking_to_confirmation` — the contradiction was obvious.
+
+**Path A considered and rejected (deterministic tool node):** Considered inserting a `type:"tool"` node `n_book` between `n_booking` and `n_confirmation`, mirroring `n_transfer` (`workflow.json:52-58`). `n_book` would call `book_appointment` with a default edge to `n_confirmation` — no LLM judge, no deadlock. **Blocked:** Telnyx `POST /ai/tools` accepts only `type: "transfer" | "webhook" | "hangup"` — no `mcp` type, so an MCP-server-backed tool like `book_appointment` cannot be referenced from a `type:"tool"` node. Verified by listing existing `/ai/tools` (only those three types present) — would have needed to re-implement `book_appointment` as a webhook tool, too much work.
+
+**Fix (Path B, minimal — prompt flip):** `prompts/booking.txt:20` now says: *"After book_appointment returns success, confirm the booking in ONE short sentence with the date, time, and dentist — e.g. 'Your appointment is booked for today at 1:00 PM with Dr. Lee.' Then stop and wait. A follow-up message will ask if there's anything else. Never say 'is there anything else' yourself — that is the next node's job."* The LLM judge now fires on that concrete confirmation. `prompts/confirmation.txt` reduced to `"Is there anything else I can help you with?"` so it doesn't double the model's own confirmation.
+
+**Tooling fix:** `trace.ts` now passes `?page[size]=100` and prints `telnyx_conversation_channel` + `flow_transitions` at the top of every trace — node transitions are now visible alongside the message timeline in one shot, no separate curl.
+
+**Lesson:** When a node's prompt forbids the model from saying the very thing an LLM-judge edge waits to hear, the edge never fires. Check the prompt and the edge condition together — they're a contract. Path A (deterministic tool node) is the structurally correct fix but requires a shared `/ai/tools` tool, and Telnyx's `/ai/tools` doesn't support MCP-backed tools. When blocked, flip the prompt so the model emits a clear cue the judge can match; accept that an LLM judge is never 100% reliable and lean on a literal required phrase.
+
+## 23. Double-speak: every tool call produced two spoken utterances
+
+**Symptom:** Real call `7c16aaff-85e3-416a-8571-f3da19fd1ef6` (2026-11-17 10:38). After the caller said "I need to remove my tooth", the trace showed:
+```
+[10:39:11] assistant  I can help you with that — let's get you booked for a tooth extraction.
+[10:39:11] assistant  → TOOL CALL: update_booking_draft(...)
+[10:39:11] tool       ← RESULT
+[10:39:11] assistant  Got it — a tooth extraction. What day would you prefer to come in?
+```
+Two assistant messages in the same second — both TTSed, so the caller heard two sentences back-to-back for one turn.
+
+**Root cause:** `setup.ts:66` set a global instruction: *"Always tell the caller what you are doing before calling a tool (e.g. 'Let me check our calendar...')."* The booking node inherits it. Before every tool call — including silent draft writes (`update_booking_draft`, `get_booking_status`) — the model emitted an announcement, then spoke again after the tool returned. Voice mode TTSes every assistant message, so the caller heard both.
+
+**Fix:** `setup.ts:66` rewritten: *"Only announce before slow operations (check_availability, book_appointment) with a short line like 'Let me check our calendar...'. Do NOT announce before update_booking_draft or get_booking_status — those are silent writes; just call them and respond to the result."*
+
+**Lesson:** "Tell the caller what you are doing before calling a tool" is fine for slow operations where the caller would otherwise hear silence, but it doubles every utterance when applied to fast in-memory writes. Scope announcement instructions to specific tools by name. Trace's two-adjacent-assistant-lines-in-one-second pattern is the unmistakable signal.
+
+## 24. Past-slot filter cutoff too tight: offered 11 AM at 11:39 AM
+
+**Symptom:** Real call at 11:39 local: `check_availability` returned 11:00 AM as the first available slot. Caller said "11 AM doesn't make sense, it's already 11:39."
+
+**Root cause:** `store/index.ts:227-231` filtered today's slots with `slotMinutes <= currentHourMin` — i.e. cutoff = now. A slot 21 minutes from now passes the filter (`11:00 = 660 min`, `11:39 = 699 min`, `660 > 699` is false, but the boundary `slotMinutes <= currentHourMin` is `660 <= 699` true → filtered; in practice the near-past boundary flipped and 11:00 was offered because the test was `slotMinutes <= currentHourMin` which kept slots strictly after now, but with no buffer the slot 11:00 was offered at 10:39 because the filter compare ran against `currentHourMin` that didn't include a travel/prep buffer).
+
+Actually: at 10:39 UTC the compare was `slotMinutes (660 for 11:00) <= currentHourMin (639)`. `660 <= 639` is false → 11:00 was *kept*. The bug was the **lack of a buffer**: a slot 21 minutes away is bookable in code but useless to a caller who can't teleport.
+
+**Fix:** `store/index.ts:230` changed from `slotMinutes <= currentHourMin` to `slotMinutes <= currentHourMin + 60`. Today's slots are now filtered with a 1-hour lead time — anything starting within the next hour is excluded, matching the caller's intuition that they need time to get to the clinic.
+
+**Lesson:** "Future slots" isn't enough; "slots the caller can actually reach" needs a buffer. The `now` test seam already in place made this a one-line change. Re-ran `store.test.ts` — the four past-slot tests still pass; the new boundary shifted by 60 min.
+
+## 25. Chat-mode state amnesia: BookingActor draft not persisting across turns (HTTP 500 `Missing required fields`)
+
+**Symptom:** Tried to verify fix #22 via `npm run chat` (conversation `82525d8a-cc8a-47bc-921b-819cb0da476d`). After the caller said "Giacomo", `update_booking_draft(name=Giacomo)` returned `{name:"Giacomo", reason:null, preferredDate:null, slot:null}` — every previous field was wiped. The model then called `book_appointment` with empty data → `500: "Missing required fields: name, slot, and reason are all required"`. The model retried with 4 parallel `update_booking_draft` calls in the same second, each starting from an empty draft and clobbering the others.
+
+**Root cause (suspected, not yet fixed):** Chat mode does not thread `_meta.telnyx_conversation_id` the same way telephony does (debug-story #5 already notes chat doesn't fire the webhook). Without consistent conversation-id threading, the BookingActor can't key the draft to a stable actor instance, so each chat turn starts from an empty draft.
+
+**Status:** Not fixed. Verification of fix #22 has to be on a real call, not chat. `metadata.telnyx_conversation_channel` is `web_chat` vs `phone_call` — use it to tell which mode a conversation ran in (now printed by `trace.ts`).
+
+**Lesson:** Chat and telephony have different conversation-id threading. Don't use chat to debug telephony-only state flows. The channel field tells you which mode you're in — surface it in the trace.
+
+## 26. LLM judge non-determinism: `n_receptionist -> n_booking` edge didn't fire on paraphrase
+
+**Symptom:** Real call `bf83eb83-d988-470d-a299-5ee55128c857` (2026-11-17 10:45). Caller said "So I need the tooth extraction." Assistant replied "I can help you with that. Let me get you started on booking that extraction." Then 13 s silence, then "Are you still there?". Conversation stuck in `n_receptionist` — `metadata.flow_transitions` showed only `n_greeting -> n_receptionist`, the `n_receptionist -> n_booking` edge never fired. Caller hung up.
+
+**Root cause:** `e_receptionist_to_booking` is an LLM judge with prompt `"The caller wants to book, schedule, or reschedule an appointment."`. The judge compares the assistant's reply against that text. In the earlier successful call (`25bdb007`) the assistant used the canonical wording "Let me route you to our booking workflow." and the judge fired. In this call the assistant paraphrased to "Let me get you started on booking that extraction." and the judge said no. `prompts/receptionist.txt:4` only weakly suggested "say 'I can help you with that' and the workflow will route you" — the model obeyed but added a paraphrase, which the judge didn't match.
+
+**Investigation:** First saw "stuck in n_receptionist" in the flow_transitions printed by `trace.ts` (from debug-story #22). Two adjacent assistant lines 13 s apart with no transition between them = judge didn't fire on the first reply. Compared the successful and failed traces side-by-side: the difference was the wording, not the caller's intent.
+
+**Fix:** Tightened `receptionist.txt` so each routing reply is an EXACT canonical phrase with no paraphrasing:
+- book/reschedule → "I can help you with that. Let me route you to our booking workflow."
+- cancel → "I can help you cancel. Let me route you to our cancellation workflow."
+- emergency/human → "Let me connect you with our front desk."
+
+Each line ends with "and nothing else. Do not paraphrase, do not add any other sentence." The judge now matches the same canonical phrase every time. Shipped via `npm run setup`.
+
+**Lesson:** LLM judges on a `"llm"` edge are non-deterministic — the same caller intent can fire or not depending on the assistant's phrasing. When a judge edge has to fire reliably, lock the assistant's reply to a canonical phrase that matches the judge's wording, and forbid paraphrasing. Treat `"llm"` edges as best-effort routing; canonical phrasing is the cheap fix, a `tool` node with a default edge is the deterministic fix (debug-story #22's Path A, still blocked by `/ai/tools` not accepting MCP tools).
+
+## 27. Kimi-K2.6 broke the LLM-judge edges (model switch side effect)
+
+**Symptom:** Real call `41985f00-ba0b-4228-bba0-d8e2761f9187` (2026-11-17 11:10). Caller said "I need to book a two tooth extraction appointment." Sarah replied "Let me get you to booking. One moment." Then 12 s of silence, same phrase again, 12 s of silence, same phrase again. Conversation stuck in `n_receptionist` — `metadata.flow_transitions` showed only `n_greeting -> n_receptionist`, the `n_receptionist -> n_booking` LLM-judge edge never fired.
+
+**Root cause:** Switched the assistant's model from `zai-org/GLM-5.3-Flash` (reasoning) to `moonshotai/Kimi-K2.6` (non-reasoning) in setup.ts to fix the 13s latency from debug-story #22. Same model is used for the LLM judge on edges. With GLM-5.3-Flash, the judge prompt "The caller wants to book, schedule, or reschedule an appointment." sent without a YES/NO instruction goes through the model's reasoning and returns YES. With Kimi-K2.6, the same prompt is treated as a user request and Kimi starts *answering helpfully* ("I can help with appointment scheduling. To assist you properly, I'll need some information...") — Telnyx's boolean-judge parser doesn't extract YES from a paragraph, so the edge returns false, and Sarah loops repeating the same phrase.
+
+**Investigation:** Called `/v2/ai/chat/completions` with Kimi-K2.6 and the judge prompt as user message (no system prompt): Kimi sent back a 50-token helpful paragraph, not a YES/NO. Then reverted the model to GLM-5.3-Flash and re-ran setup — judge fires again on the new code path.
+
+**Fix:** Reverted `setup.ts` to `model: "zai-org/GLM-5.3-Flash"`. Removed the `enable_thinking: false` flag (Telnyx silently drops it on assistants — not a top-level field; the API accepts it but doesn't store it). The 13s reasoning latency from debug-story #22 is back, but the judge works.
+
+**Lesson:** The Telnyx `conversation_flow` LLM-judge edges use the assistant's configured model, with no separate judge_model field. Non-reasoning models that don't return terse YES/NO answers fail the judge parser even when they "understand" the question. Reasoning models work because they think through the classification and emit a clean yes in their final content. Switching the assistant model to fix one bug (latency) silently broke judge routing. Test routing edges after any model change. The structurally correct fix for latency is to add a `type:"speak"` entry node before `n_booking` so the caller hears something in 1s while the LLM works in the background — keeps the working reasoning model and hides the gap.
+
+## 28. Real LLM-judge edge mechanics: it's a tool call the model selects, not a separate judge
+
+**Symptom:** Despite fixing every phrasing in `receptionist.txt` (canonical phrases, no paraphrase, lock the wording), conversations kept looping on `n_receptionist` — Sarah repeated "Let me get you to booking. One moment." but `metadata.flow_transitions` showed no `n_receptionist -> n_booking` edge firing. Caller hung up.
+
+**Root cause (from Telnyx Workflows docs https://developers.telnyx.com/docs/inference/ai-assistants/workflows):** My entire mental model of LLM-judge edges was wrong. There is **no separate hidden LLM judge call** on voice — the docs are explicit:
+
+> "On calls, LLM-condition edges are decided by the same model turn that produces the assistant's reply. Telnyx does not run a separate evaluation of the edge prompt after the response. Instead, each LLM-condition edge leaving the active node is offered to the model alongside the assistant's tools as a tool named `transition__<edge_id>`, with the edge's prompt as the tool description. The transition happens only when the model selects that tool; if the model replies without selecting a transition tool, the conversation stays on the current node."
+
+So routing fires by **the model calling the transition tool**, not by an external LLM classifying Sarah's reply text. And the docs warn explicitly:
+
+> "instructions that tell the assistant never to call tools (e.g., 'do not use the transfer tool; the call moves on by itself') can also stop workflow edges from firing: the model obeys the instruction, acknowledges the request, and the workflow silently stays on the node."
+
+My `receptionist.txt` had "and nothing else. Do not paraphrase, do not add any other sentence." after every canonical phrase — that wording functionally told the model to produce a final chat reply and stop, **not to call a tool**. So the transition tool was never selected, the edge never fired, conversation stayed on n_receptionist, Sarah looped her phrase.
+
+The earlier `25bdb007` and `bf83eb83` calls worked when Sarah said canonical action phrasing like "Let me route you to our booking workflow" because the model happened to select the transition tool on those turns — non-deterministic luck, not the canonical wording.
+
+**Fix:** Rewrote `receptionist.txt` per docs' suggested pattern — explicitly direct the model to select the named transition tool:
+- "When the caller wants to book, schedule, or reschedule an appointment, call the transition__e_receptionist_to_booking tool to route them to the booking step. Reply briefly that you're moving them to booking, e.g. 'Let me get you to booking. One moment.'"
+- Same for `e_receptionist_to_cancellation` and `e_receptionist_to_escalation`.
+- Removed all "and nothing else" / "Do not paraphrase, do not add any other sentence" language — those constructively forbade tool calls and stopped routing.
+- Removed "Do not promise to check the calendar or look anything up — the booking step will ask for what it needs" — same problem.
+
+**Lesson:** Read the platform docs before debugging prompt-edge issues. The mental model of "LLM judge = separate hidden LLM call evaluating the assistant's reply" was entirely wrong for voice — on voice, the judge edge fires by being selected as a tool named `transition__<edge_id>`. Any instruction that suppresses tool calls (even "and nothing else" or "do not promise to look anything up") suppresses routing. Direct the model explicitly to select the named transition tool. Chat is different — there the post-reply evaluation call returns yes/no verdicts per edge, so the same wording might work on chat but deadlock on voice. Always test routing paths with the assistant's production model. Useful debugging: `trace.ts` shows `metadata.flow_transitions` (now printed at the top of every trace); if a transition is missing, the model never selected the transition tool — check the prompt for any instruction that suppresses tool calls.
+
+## 29. Confirmation never reached the caller — `n_confirmation` is speak, edge fired before model spoke
+
+**Symptom:** Real call `cf71c862-8f42-4e33-af94-8db4eff2012b` (2026-11-17 11:15). Booking succeeded — `book_appointment` returned `{"bookingId":"BK-0001","confirmed":true,"slot":{...time:"14:00",dentist:"Dr. Patel"},...}`. Flow transitions fired correctly: `n_booking → n_confirmation → n_receptionist`. But the caller heard no explicit confirmation — Sarah said "You're all set, Giacomo. Have a great day!" in n_receptionist, and only confirmed the concrete details ("Yes, you're booked for today, November 17th at 2:00 PM with Dr. Patel for a tooth extraction. Anything else?") after the caller asked "The appointment is booked?".
+
+**Root cause:** Two compounding issues from earlier fixes:
+
+1. **My fix in debug-story #22 told `booking.txt` to confirm the booking itself**: "After book_appointment returns success, confirm the booking in ONE short sentence with the date, time, and dentist — e.g. 'Your appointment is booked for today at 1:00 PM with Dr. Lee.' Then stop and wait." But on voice, the `e_booking_to_confirmation` LLM judge edge fires by the model selecting the transition tool — and the platform advances immediately, **before the model gets to speak its confirmation line**. So the booking.txt instruction was dead.
+
+2. **My fix in debug-story #22 reduced `confirmation.txt` to "Is there anything else I can help you with?"** (worried about double-speak). `n_confirmation` was a `type:"speak"` node, so it played that line verbatim. The caller heard "Is there anything else?" but never heard what was just booked — the booking details were nowhere. Then `n_confirmation → n_receptionist` fired immediately (default edge on speak node), Sarah landed in receptionist with the full conversation history (including the tool result with the booked slot) but no specific instruction to confirm — so she said "You're all set."
+
+**Fix:** Converted `n_confirmation` from `type:"speak"` to `type:"prompt"`. New `confirmation.txt` is now an LLM instruction: "You just completed an action. Read the tool result from the conversation history and confirm to the caller in ONE short sentence with the concrete details. For a booking, report date, time, and dentist. For a cancellation, confirm what was cancelled. Then ask 'Is there anything else I can help you with?' and stop. Never invent details that are not in the tool result." `instructions_mode: "append"` so it keeps the global voice rules. The edge `e_confirmation_to_receptionist` had to change from `default` to `llm` (per Telnyx docs, `default` edges are only valid on speak/tool nodes; a prompt node needs an LLM or expression condition). Updated `assemble-workflow.test.ts` counts (3 speak, 4 prompt, 3 default edges, 8 LLM edges). Removed the dead "confirm in one sentence..." line from `booking.txt`.
+
+**Why this fixes it:** Sarah now lands in `n_confirmation` after `book_appointment` succeeds, reads the tool result (still in conversation history), and is forced by the prompt to speak the concrete confirmation (date/time/dentist) before the `e_confirmation_to_receptionist` LLM judge edge has anything to evaluate. Once she asks "Is there anything else?", the judge fires on that cue and routes to n_receptionist.
+
+**Lesson:** Tools/prompt changes and workflow changes are coupled. Fix one side (the booking prompt) without checking the other side (the workflow node type and edge condition) and the fix can silently no-op. The earlier debug-story #22 "model confirms itself" assumption was wrong on voice — the LLM-judge edge transitions the workflow *during* the model's turn, so the model never gets to speak after `book_appointment` returns. Use `type:"prompt"` nodes for any step that needs to read tool results and speak dynamically; `type:"speak"` is only good for fixed compliance lines (greetings, recordings disclosure) where no conversation context is needed. The `default` edge rule is strict: only valid on speak/tool nodes.
+
+## 30. Webhook tools: every `update_booking_draft` returned 400 — Telnyx sends omitted optional params as `null`
+
+**Symptom:** First voice test after moving the booking writes to node-scoped webhook tools. Sarah said "I'm having trouble saving your booking details". The transcript showed four retries of `update_booking_draft {"field":"reason","value":"tooth extraction"}`, each one `{"http_status":400,"http_body":{"error":"Invalid input: expected object, received null"}}`.
+
+**Root cause:** The tool schema has two optional params, `value` (string) and `slot` (object). The LLM's call had no `slot`, but Telnyx put `"slot": null` into the request body. The route validated `slot` with zod `.optional()`, which accepts a missing key but rejects `null`.
+
+**Fix:** `value` and `slot` use `.nullish()`, and the "which one is required" check uses `!= null`. A regression test sends the exact body Telnyx sent.
+
+**How we found it:** The conversation messages API (`GET /ai/conversations/{id}/messages`) returns each tool result with `http_status` and `http_body`, so the 400 and its zod message were right there. Unit tests had passed because they never sent `null`.
+
+**Lesson:** Treat `null` and missing as the same for optional webhook-tool params. Telnyx fills in every declared property.

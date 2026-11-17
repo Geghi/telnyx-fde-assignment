@@ -37,16 +37,17 @@ After each task, the caller can ask for something else (loop back to the recepti
 │  Edge Function    │                │  MCP Server          │
 │  (TypeScript)     │                │  (TypeScript, edge)  │
 │  webhook handler   │                │                      │
-│                   │                │  Tools:              │
-│  ┌─────┐ ┌──────┐│                │  update_booking_draft│
-│  │ KV  │ │Actor ││                │  get_booking_status  │
+│                   │                │  MCP (read, global): │
+│  ┌─────┐ ┌──────┐│                │  get_business_info   │
+│  │ KV  │ │Actor ││                │  get_services        │
 │  │     │ │      ││                │  check_availability  │
-│  └─────┘ └──────┘│                │  book_appointment    │
-│                   │                │  cancel_appointment  │
-│  structured logs  │                │  get_services        │
-│  KV counters      │                │  get_business_info   │
-└───────────────────┘                │                      │
-                                     │  in-memory data      │
+│  └─────┘ └──────┘│                │  /tools/* (write,    │
+│                   │                │  node-scoped):       │
+│  structured logs  │                │  update_booking_draft│
+│  KV counters      │                │  get_booking_status  │
+└───────────────────┘                │  book_appointment    │
+                                     │  cancel_appointment  │
+                                     │  BookingActor/caller │
                                      └──────────────────────┘
         All on Telnyx Edge Compute
 ```
@@ -125,19 +126,21 @@ Single-threaded, per-key isolation, persistent storage.
 
 ### 2. Conversation Workflow
 
-A directed graph of 7 nodes connected by conditional edges.
+A directed graph of 9 nodes connected by conditional edges.
 
 #### Nodes
 
 | #  | Node           | Type   | Purpose                                               | Tools scoped        |
 |----|----------------|--------|-------------------------------------------------------|---------------------|
 | 1  | Greeting       | speak  | Compliance disclosure + greeting (verbatim)           | —                   |
-| 2  | Receptionist   | prompt | Identify intent; answer FAQ; route to next node        | get_business_info, get_services |
-| 3  | Booking        | prompt | Multi-turn booking: progressive draft via MCP tools   | update_booking_draft, get_booking_status, check_availability, book_appointment |
-| 4  | Cancellation   | prompt | Multi-turn: find by phone → confirm → cancel          | cancel_appointment  |
-| 5  | Confirmation   | speak  | Verbatim confirmation (booking, cancellation, callback) | —                |
-| 6  | Escalation     | speak  | "Connecting you to our front desk. Please hold."       | —                   |
-| 7  | Transfer       | tool   | Call Control API transfer (terminal if success)        | — (shared tool)     |
+| 2  | Receptionist   | prompt | Identify intent; answer FAQ and "what appointment do I have?"; route | MCP reads + get_appointment |
+| 3  | Booking        | prompt | Multi-turn booking: progressive draft                  | MCP reads + update_booking_draft, get_booking_status, book_appointment |
+| 4  | Booking request | prompt | Online booking off: collect reason, date, name; save a call-back request | MCP reads + update_booking_draft, get_booking_status, save_booking_request |
+| 5  | Callback confirmation | speak | "They'll call you back as soon as possible" (verbatim) | — |
+| 6  | Cancellation   | prompt | Read the appointment, confirm, then cancel             | MCP reads + get_appointment, cancel_appointment |
+| 7  | Confirmation   | prompt | Read the tool result; confirm booking or cancellation  | —                |
+| 8  | Escalation     | speak  | "Connecting you to our front desk. Please hold."       | —                   |
+| 9  | Transfer       | tool   | Call Control API transfer (terminal if success)        | — (shared tool)     |
 
 #### Edges
 
@@ -147,15 +150,19 @@ A directed graph of 7 nodes connected by conditional edges.
 | Receptionist  | Booking       | LLM condition      | caller wants to book or reschedule     |
 | Receptionist  | Cancellation  | LLM condition      | caller wants to cancel                 |
 | Receptionist  | Escalation    | LLM condition      | caller requests human or has emergency  |
-| Booking       | Confirmation  | LLM condition      | booking or callback request completed  |
+| Booking       | Booking request | variable comparison | `online_booking_enabled == "false"` (checked before the model's turn) |
+| Booking       | Confirmation  | LLM condition      | appointment booked                     |
+| Booking request | Callback confirmation | LLM condition | request saved                     |
+| Booking request | Receptionist | LLM condition     | caller abandons the request            |
+| Callback confirmation | Receptionist | default     | — (speak node → default required)      |
 | Booking       | Receptionist  | LLM condition      | caller wants to abandon booking         |
 | Cancellation  | Confirmation  | LLM condition      | cancellation completed                  |
 | Cancellation  | Receptionist  | LLM condition      | caller wants to abandon cancellation    |
-| Confirmation  | Receptionist  | default            | "Is there anything else?" (speak → default) |
+| Confirmation  | Receptionist  | LLM condition      | caller was told the result and asked "anything else?" |
 | Escalation    | Transfer      | default            | — (speak node → default required)      |
 | Transfer      | Receptionist  | default            | if transfer fails (fallback)           |
 
-Stretch: Receptionist → Escalation via variable comparison
+Not built: Receptionist → Escalation via variable comparison
 (`telnyx_conversation_duration_secs >= 300`).
 
 #### How prompt nodes route
@@ -302,37 +309,44 @@ URL: `https://mcp-server-<org>.telnyxcompute.com`
 
 **Transport:** MCP over HTTP (Streamable HTTP transport).
 
-**Tools (7):**
+**Tool scoping.** Telnyx attaches MCP servers to the whole assistant; only shared tools
+(`/ai/tools`) can be scoped per workflow node (`shared_tool_ids` + `tools_mode`). So:
 
-| Tool                   | Args                              | Returns                              | Used in        |
-|------------------------|-----------------------------------|--------------------------------------|----------------|
-| `update_booking_draft` | `field`, `value`                  | `{ draft, status: { next_step, missing_fields } }` | Booking |
-| `get_booking_status`   | —                                 | `{ draft, status }`                  | Booking        |
-| `check_availability`    | `date_from`, `date_to?`           | List of available slots              | Booking        |
-| `book_appointment`     | (reads draft by caller_phone)     | `{ booking_id, date, time, dentist, confirmed }` | Booking |
-| `cancel_appointment`   | `phone`, `booking_id?`            | `{ cancelled: true, date }`          | Cancellation   |
-| `get_services`         | —                                 | Services with prices/descriptions    | Receptionist   |
-| `get_business_info`    | —                                 | Hours, location, policies            | Receptionist   |
+- **MCP (read-only, every node):** `get_business_info`, `get_services`, `check_availability(date_from, date_to?)`.
+- **Webhook tools (per caller, node-scoped):** `POST /tools/<name>` on this same function, created as
+  shared tools by `setup.ts` (`src/webhook-tools.ts`) and listed in `shared_tool_ids` with
+  `tools_mode: "append"` only on the nodes that need them:
+
+| Tool                   | LLM args          | Returns                                          | Node         |
+|------------------------|-------------------|--------------------------------------------------|--------------|
+| `update_booking_draft` | `field` + `value` (or `slot` object) | `{ draft, status: { nextStep, missingFields } }` | Booking      |
+| `get_booking_status`   | —                 | `{ draft, status }`                              | Booking      |
+| `book_appointment`     | —                 | `{ bookingId, date, time, dentist, confirmed }` or `{ error }` | Booking |
+| `save_booking_request` | —                 | `{ requestId, status: "callback_requested", … }` or `{ error }` | Booking request |
+| `get_appointment`      | —                 | `{ booking, request }` (either may be null)      | Receptionist, Cancellation |
+| `cancel_appointment`   | —                 | `{ cancelled: true, kind: "booking"\|"request", date }` or `{ cancelled: false, reason }` | Cancellation |
+
+`book_appointment` reads `online_booking_enabled` from KV on every call and refuses with
+`{ error }` when it is `"false"`. Saved requests are also appended to the clinic-wide
+`BookingActor` instance `clinic:callbacks`, which staff read with `GET /callbacks`
+(`Authorization: Bearer <STAFF_TOKEN>`; no token configured → 401).
+
+`caller_phone` is a preset body field (`{{caller_phone}}`): Telnyx fills it from the dynamic
+variable and the LLM never sees it. Empty or unresolved (chat mode) → caller `unknown`.
 
 **Booking draft status flow:**
 ```
-update_booking_draft("reason", value)
-  → status: { next_step: "ask_preferred_date", missing: ["preferred_date", "slot", "name"] }
-update_booking_draft("preferred_date", value)
-  → status: { next_step: "search_slots", missing: ["slot", "name"] }
-  (LLM calls check_availability here)
-update_booking_draft("slot", value)
-  → status: { next_step: "ask_name", missing: ["name"] }
-update_booking_draft("name", value)
-  → status: { next_step: "book", missing: [] }
-  (LLM calls book_appointment here)
+update_booking_draft("reason")        → nextStep: ask_preferred_date
+update_booking_draft("preferredDate") → nextStep: search_slots   (LLM calls check_availability)
+update_booking_draft("slot")          → nextStep: ask_name
+update_booking_draft("name")          → nextStep: book           (LLM calls book_appointment)
 ```
+The caller can correct any field at any time; `update_booking_draft` overwrites.
 
-The draft is keyed by `caller_phone` in the MCP server's in-memory store.
-The caller can correct any field at any time — `update_booking_draft` overwrites.
-`get_booking_status` retrieves the current draft and status.
-
-**Data store:** in-memory Map keyed by caller phone (resets on cold start).
+**State:** `BookingActor` keyed `caller:<caller_phone>` holds the draft, the booking and a
+booking counter, so a booking made on one call can be cancelled on the next. Single-threaded,
+so parallel draft updates can't overwrite each other. `check_availability` reads no actor: it
+offers the fixed slot grid and does not exclude booked slots.
 
 ### 5. KV (Key-Value Store)
 
@@ -361,20 +375,27 @@ if the same person calls twice, `totalCalls` is 2 and the greeting says "Welcome
 
 ### 7. Observability
 
-**Structured logs (webhook):**
+**Structured logs (webhook):** one JSON line per call. Success goes to `console.log`; failures go to `console.error` with `outcome` set to `invalid_payload` or `error` (plus `error`). After an actor or KV failure, the error is rethrown unchanged.
 ```json
 {
   "timestamp": "ISO-8601",
-  "caller": "+15551234567",
   "event": "assistant.initialization",
+  "caller": "+15551234567",
+  "call_control_id": "v3:...",
+  "actor_key": "caller:+15551234567",
   "outcome": "ok",
   "latency_ms": 42,
-  "returning_caller": true,
-  "actor_key": "caller:+15551234567"
+  "returning_caller": true
 }
 ```
 
-**Signal beyond logs:** KV counters (calls per caller, errors — readable via `/metrics` endpoint).
+**Structured logs (MCP server):** one JSON line per request, with `latency_ms` on every line.
+- Webhook tool routes (`POST /tools/<name>`) log `event: "tool_call"` (or `tool_error`) with `tool`, `caller` and `status`.
+- JSON-RPC requests log `event: "mcp_request"` (or `mcp_error`) with `method` and, for `tools/call`, `tool` and `status`.
+
+To trace one call across both functions, use `caller`: it appears in the webhook line and in every tool-route line.
+
+**Signal beyond logs:** KV counters `webhook_calls` (total), `webhook_calls/<phone>` (per caller) and `webhook_errors`. `GET /metrics` returns the total and error counts. Per-request latency is in every log line.
 
 **How you'd know it broke within 1 minute:**
 1. KV `webhook_errors` spiking → the webhook is failing.
