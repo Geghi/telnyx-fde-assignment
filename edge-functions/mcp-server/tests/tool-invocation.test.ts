@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
+import { BookingActor } from "../src/actor.js";
 
-function callTool(name: string, args: Record<string, unknown> = {}): Request {
+function callTool(
+  name: string,
+  args: Record<string, unknown> = {},
+  conversationId?: string
+): Request {
+  const params: Record<string, unknown> = { name, arguments: args };
+  if (conversationId) {
+    params._meta = { telnyx_conversation_id: conversationId };
+  }
   return new Request("http://localhost/", {
     method: "POST",
     headers: {
@@ -11,21 +20,53 @@ function callTool(name: string, args: Record<string, unknown> = {}): Request {
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name, arguments: args },
+      params,
     }),
   });
 }
 
-async function callHandler(req: Request): Promise<{
+function createFakeBookingBinding(): { idFromName(name: string): unknown } {
+  const actors = new Map<string, unknown>();
+  return {
+    idFromName(name: string) {
+      let a = actors.get(name);
+      if (!a) {
+        const storage = new Map<string, unknown>();
+        const fakeStorage = {
+          get: async (k: string) => (storage.get(k) ?? null) as unknown,
+          put: async (k: string, v: unknown) => {
+            storage.set(k, v);
+          },
+        };
+        a = Object.create(BookingActor.prototype);
+        Object.assign(a, { ctx: { storage: fakeStorage } });
+        actors.set(name, a);
+      }
+      return a;
+    },
+  };
+}
+
+async function callHandler(
+  req: Request,
+  env?: { BOOKING?: { idFromName(name: string): unknown } }
+): Promise<{
   status: number;
-  body: { jsonrpc: string; id: number; result?: { content: { type: string; text: string }[]; isError?: boolean }; error?: { code: number; message: string } };
+  body: {
+    jsonrpc: string;
+    id: number;
+    result?: { content: { type: string; text: string }[]; isError?: boolean };
+    error?: { code: number; message: string };
+  };
 }> {
   const handler = (await import("../src/index.js")).default;
-  const res = await handler.fetch(req);
+  const res = await handler.fetch(req, env as Record<string, unknown> | undefined);
   return { status: res.status, body: JSON.parse(await res.text()) };
 }
 
-function resultText(body: Awaited<ReturnType<typeof callHandler>>["body"]): string {
+function resultText(
+  body: Awaited<ReturnType<typeof callHandler>>["body"]
+): string {
   return body.result?.content?.[0]?.text ?? "";
 }
 
@@ -80,13 +121,18 @@ describe("MCP tool invocation via tools/call", () => {
   });
 
   it("update_booking_draft saves a field and returns the draft plus status", async () => {
-    const phone = "+10000000001";
+    const env = { BOOKING: createFakeBookingBinding() };
     const { body } = await callHandler(
-      callTool("update_booking_draft", {
-        caller_phone: phone,
-        field: "reason",
-        value: "cleaning",
-      })
+      callTool(
+        "update_booking_draft",
+        {
+          caller_phone: "+10000000001",
+          field: "reason",
+          value: "cleaning",
+        },
+        "conversation-1001"
+      ),
+      env
     );
     const parsed = JSON.parse(resultText(body));
     expect(parsed.draft.reason).toBe("cleaning");
@@ -95,8 +141,14 @@ describe("MCP tool invocation via tools/call", () => {
   });
 
   it("get_booking_status returns an empty draft for a new caller", async () => {
+    const env = { BOOKING: createFakeBookingBinding() };
     const { body } = await callHandler(
-      callTool("get_booking_status", { caller_phone: "+10000000002" })
+      callTool(
+        "get_booking_status",
+        { caller_phone: "+10000000002" },
+        "conversation-1002"
+      ),
+      env
     );
     const parsed = JSON.parse(resultText(body));
     expect(parsed.draft).toBeNull();
@@ -104,39 +156,50 @@ describe("MCP tool invocation via tools/call", () => {
   });
 
   it("end-to-end booking flow: update drafts → book → cancel", async () => {
+    const env = { BOOKING: createFakeBookingBinding() };
     const phone = "+10000000003";
+    const conv = "conversation-1003";
 
     await callHandler(
-      callTool("update_booking_draft", {
-        caller_phone: phone,
-        field: "reason",
-        value: "dental exam",
-      })
+      callTool(
+        "update_booking_draft",
+        { caller_phone: phone, field: "reason", value: "dental exam" },
+        conv
+      ),
+      env
     );
     await callHandler(
-      callTool("update_booking_draft", {
-        caller_phone: phone,
-        field: "preferredDate",
-        value: "2026-12-03",
-      })
+      callTool(
+        "update_booking_draft",
+        { caller_phone: phone, field: "preferredDate", value: "2026-12-03" },
+        conv
+      ),
+      env
     );
     await callHandler(
-      callTool("update_booking_draft", {
-        caller_phone: phone,
-        field: "slot",
-        value: { date: "2026-12-03", time: "10:00", dentist: "Dr. Lee" },
-      })
+      callTool(
+        "update_booking_draft",
+        {
+          caller_phone: phone,
+          field: "slot",
+          value: { date: "2026-12-03", time: "10:00", dentist: "Dr. Lee" },
+        },
+        conv
+      ),
+      env
     );
     await callHandler(
-      callTool("update_booking_draft", {
-        caller_phone: phone,
-        field: "name",
-        value: "Eval Patient",
-      })
+      callTool(
+        "update_booking_draft",
+        { caller_phone: phone, field: "name", value: "Eval Patient" },
+        conv
+      ),
+      env
     );
 
     const bookRes = await callHandler(
-      callTool("book_appointment", { caller_phone: phone })
+      callTool("book_appointment", { caller_phone: phone }, conv),
+      env
     );
     const booking = JSON.parse(resultText(bookRes.body));
     expect(booking.bookingId).toMatch(/^BK-\d+$/);
@@ -146,25 +209,76 @@ describe("MCP tool invocation via tools/call", () => {
     expect(booking.confirmed).toBe(true);
 
     const cancelRes = await callHandler(
-      callTool("cancel_appointment", { caller_phone: phone })
+      callTool("cancel_appointment", { caller_phone: phone }, conv),
+      env
     );
     const cancelled = JSON.parse(resultText(cancelRes.body));
     expect(cancelled.cancelled).toBe(true);
     expect(cancelled.date).toBe("2026-12-03");
   });
 
-  it("book_appointment returns an error message (not a throw) for missing fields", async () => {
-    const phone = "+10000000004";
+  it("each conversation has isolated state (two callers do not share draft)", async () => {
+    const env = { BOOKING: createFakeBookingBinding() };
     await callHandler(
-      callTool("update_booking_draft", {
-        caller_phone: phone,
-        field: "reason",
-        value: "cleaning",
-      })
+      callTool(
+        "update_booking_draft",
+        {
+          caller_phone: "+10000000010",
+          field: "reason",
+          value: "cleaning-A",
+        },
+        "conversation-A"
+      ),
+      env
+    );
+    await callHandler(
+      callTool(
+        "update_booking_draft",
+        {
+          caller_phone: "+10000000011",
+          field: "reason",
+          value: "cleaning-B",
+        },
+        "conversation-B"
+      ),
+      env
+    );
+    const a = await callHandler(
+      callTool(
+        "get_booking_status",
+        { caller_phone: "+10000000010" },
+        "conversation-A"
+      ),
+      env
+    );
+    const b = await callHandler(
+      callTool(
+        "get_booking_status",
+        { caller_phone: "+10000000011" },
+        "conversation-B"
+      ),
+      env
+    );
+    expect(JSON.parse(resultText(a.body)).draft.reason).toBe("cleaning-A");
+    expect(JSON.parse(resultText(b.body)).draft.reason).toBe("cleaning-B");
+  });
+
+  it("book_appointment returns an error message (not a throw) for missing fields", async () => {
+    const env = { BOOKING: createFakeBookingBinding() };
+    const phone = "+10000000004";
+    const conv = "conversation-1004";
+    await callHandler(
+      callTool(
+        "update_booking_draft",
+        { caller_phone: phone, field: "reason", value: "cleaning" },
+        conv
+      ),
+      env
     );
 
     const { body, status } = await callHandler(
-      callTool("book_appointment", { caller_phone: phone })
+      callTool("book_appointment", { caller_phone: phone }, conv),
+      env
     );
     expect(status).toBe(200);
     const text = resultText(body);
@@ -173,8 +287,14 @@ describe("MCP tool invocation via tools/call", () => {
   });
 
   it("cancel_appointment returns cancelled:false for a caller with no booking", async () => {
+    const env = { BOOKING: createFakeBookingBinding() };
     const { body } = await callHandler(
-      callTool("cancel_appointment", { caller_phone: "+19998887777" })
+      callTool(
+        "cancel_appointment",
+        { caller_phone: "+19998887777" },
+        "conversation-1005"
+      ),
+      env
     );
     const parsed = JSON.parse(resultText(body));
     expect(parsed.cancelled).toBe(false);

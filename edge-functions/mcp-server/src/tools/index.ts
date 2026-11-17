@@ -66,10 +66,10 @@ export function createMcpServer(store: Store): McpServer {
         const start = new Date(args.date_from + "T00:00:00");
         const end = new Date(args.date_to + "T00:00:00");
         for (let d = start; d <= end; d.setDate(d.getDate() + 1)) {
-          slots.push(...store.checkAvailability(ymd(d), now));
+          slots.push(...(await store.checkAvailability(ymd(d), now)));
         }
       } else {
-        slots.push(...store.checkAvailability(args.date_from, now));
+        slots.push(...(await store.checkAvailability(args.date_from, now)));
       }
       return {
         content: [
@@ -104,12 +104,12 @@ export function createMcpServer(store: Store): McpServer {
         .describe("The value for the field. For 'slot', pass an object with date, time, and dentist."),
     },
     async (args) => {
-      const draft = store.updateDraft(
+      const draft = await store.updateDraft(
         args.caller_phone,
         args.field as "reason" | "preferredDate" | "slot" | "name",
         args.value as string | Slot | null
       );
-      const status = store.getDraftStatus(args.caller_phone);
+      const status = await store.getDraftStatus(args.caller_phone);
       return {
         content: [
           {
@@ -130,8 +130,8 @@ export function createMcpServer(store: Store): McpServer {
         .describe("The caller's phone number (E.164 format)"),
     },
     async (args) => {
-      const draft = store.getDraft(args.caller_phone);
-      const status = store.getDraftStatus(args.caller_phone);
+      const draft = await store.getDraft(args.caller_phone);
+      const status = await store.getDraftStatus(args.caller_phone);
       return {
         content: [
           {
@@ -153,7 +153,7 @@ export function createMcpServer(store: Store): McpServer {
     },
     async (args) => {
       try {
-        const booking = store.createBooking({ callerPhone: args.caller_phone });
+        const booking = await store.createBooking({ callerPhone: args.caller_phone });
         return {
           content: [
             {
@@ -188,7 +188,7 @@ export function createMcpServer(store: Store): McpServer {
         .describe("Optional booking ID to cancel a specific booking"),
     },
     async (args) => {
-      const result = store.cancelBooking(args.caller_phone);
+      const result = await store.cancelBooking(args.caller_phone);
       return {
         content: [
           {

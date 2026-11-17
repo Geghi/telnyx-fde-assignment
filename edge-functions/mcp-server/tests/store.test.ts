@@ -119,82 +119,82 @@ describe("Store", () => {
   });
 
   describe("availability", () => {
-    it("returns slots for a given date", () => {
-      const slots = store.checkAvailability("2026-12-02");
+    it("returns slots for a given date", async () => {
+      const slots = await store.checkAvailability("2026-12-02");
       expect(slots.length).toBeGreaterThan(0);
       expect(slots[0].date).toBe("2026-12-02");
       expect(slots[0].time).toBeDefined();
       expect(slots[0].dentist).toBeDefined();
     });
 
-    it("returns empty for a Sunday (clinic closed)", () => {
-      const slots = store.checkAvailability("2026-12-06");
+    it("returns empty for a Sunday (clinic closed)", async () => {
+      const slots = await store.checkAvailability("2026-12-06");
       expect(slots).toEqual([]);
     });
 
-    it("excludes past times when checking today with a current time", () => {
+    it("excludes past times when checking today with a current time", async () => {
       const now = new Date("2026-11-16T14:30:00");
-      const slots = store.checkAvailability("2026-11-16", now);
+      const slots = await store.checkAvailability("2026-11-16", now);
       expect(slots.find((s) => s.time === "09:00")).toBeUndefined();
       expect(slots.find((s) => s.time === "13:00")).toBeUndefined();
       expect(slots.find((s) => s.time === "15:00")).toBeDefined();
       expect(slots.find((s) => s.time === "17:00")).toBeDefined();
     });
 
-    it("includes all morning slots when checking today before opening", () => {
+    it("includes all morning slots when checking today before opening", async () => {
       const now = new Date("2026-11-16T07:00:00");
-      const slots = store.checkAvailability("2026-11-16", now);
+      const slots = await store.checkAvailability("2026-11-16", now);
       expect(slots.find((s) => s.time === "09:00")).toBeDefined();
       expect(slots.find((s) => s.time === "11:00")).toBeDefined();
     });
 
-    it("returns all slots for a future date regardless of now", () => {
+    it("returns all slots for a future date regardless of now", async () => {
       const now = new Date("2026-11-16T20:00:00");
-      const slots = store.checkAvailability("2026-12-01", now);
+      const slots = await store.checkAvailability("2026-12-01", now);
       expect(slots.find((s) => s.time === "09:00")).toBeDefined();
     });
 
-    it("returns all slots for today when now is not provided", () => {
-      const slots = store.checkAvailability("2026-12-02");
+    it("returns all slots for today when now is not provided", async () => {
+      const slots = await store.checkAvailability("2026-12-02");
       expect(slots.find((s) => s.time === "09:00")).toBeDefined();
     });
 
-    it("excludes already booked slots", () => {
-      store.createBooking({
+    it("excludes already booked slots", async () => {
+      await store.createBooking({
         callerPhone: "+15551234567",
         name: "John",
         slot: { date: "2026-12-02", time: "09:00", dentist: "Dr. Lee" },
         reason: "cleaning",
       });
-      const slots = store.checkAvailability("2026-12-02");
+      const slots = await store.checkAvailability("2026-12-02");
       expect(slots.find((s) => s.time === "09:00")).toBeUndefined();
     });
   });
 
   describe("booking draft", () => {
-    it("starts empty for a new caller", () => {
-      const draft = store.getDraft("+15551234567");
+    it("starts empty for a new caller", async () => {
+      const draft = await store.getDraft("+15551234567");
       expect(draft).toBeNull();
     });
 
-    it("saves a field and returns the updated draft", () => {
-      const draft = store.updateDraft("+15551234567", "reason", "cleaning");
+    it("saves a field and returns the updated draft", async () => {
+      const draft = await store.updateDraft("+15551234567", "reason", "cleaning");
       expect(draft.reason).toBe("cleaning");
       expect(draft.preferredDate).toBeNull();
     });
 
-    it("overwrites a field when caller corrects", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      const draft = store.updateDraft("+15551234567", "reason", "root canal");
+    it("overwrites a field when caller corrects", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      const draft = await store.updateDraft("+15551234567", "reason", "root canal");
       expect(draft.reason).toBe("root canal");
     });
 
-    it("accumulates fields across calls", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      store.updateDraft("+15551234567", "preferredDate", "2026-11-16");
-      store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
-      store.updateDraft("+15551234567", "name", "John");
-      const draft = store.getDraft("+15551234567");
+    it("accumulates fields across calls", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await store.updateDraft("+15551234567", "preferredDate", "2026-11-16");
+      await store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
+      await store.updateDraft("+15551234567", "name", "John");
+      const draft = await store.getDraft("+15551234567");
       expect(draft).not.toBeNull();
       expect(draft!.reason).toBe("cleaning");
       expect(draft!.preferredDate).toBe("2026-11-16");
@@ -202,11 +202,11 @@ describe("Store", () => {
       expect(draft!.name).toBe("John");
     });
 
-    it("isolates drafts per caller", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      store.updateDraft("+19998887777", "reason", "checkup");
-      const d1 = store.getDraft("+15551234567");
-      const d2 = store.getDraft("+19998887777");
+    it("isolates drafts per caller", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await store.updateDraft("+19998887777", "reason", "checkup");
+      const d1 = await store.getDraft("+15551234567");
+      const d2 = await store.getDraft("+19998887777");
       expect(d1).not.toBeNull();
       expect(d2).not.toBeNull();
       expect(d1!.reason).toBe("cleaning");
@@ -215,11 +215,11 @@ describe("Store", () => {
   });
 
   describe("create booking from draft", () => {
-    it("creates a booking and returns confirmation", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
-      store.updateDraft("+15551234567", "name", "John");
-      const booking = store.createBooking({ callerPhone: "+15551234567" });
+    it("creates a booking and returns confirmation", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
+      await store.updateDraft("+15551234567", "name", "John");
+      const booking = await store.createBooking({ callerPhone: "+15551234567" });
       expect(booking.bookingId).toBeDefined();
       expect(booking.date).toBe("2026-11-16");
       expect(booking.time).toBe("09:00");
@@ -227,77 +227,77 @@ describe("Store", () => {
       expect(booking.confirmed).toBe(true);
     });
 
-    it("clears the draft after booking", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
-      store.updateDraft("+15551234567", "name", "John");
-      store.createBooking({ callerPhone: "+15551234567" });
-      expect(store.getDraft("+15551234567")).toBeNull();
+    it("clears the draft after booking", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
+      await store.updateDraft("+15551234567", "name", "John");
+      await store.createBooking({ callerPhone: "+15551234567" });
+      expect(await store.getDraft("+15551234567")).toBeNull();
     });
 
-    it("throws if draft is missing required fields", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      expect(() => store.createBooking({ callerPhone: "+15551234567" })).toThrow();
+    it("throws if draft is missing required fields", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await expect(store.createBooking({ callerPhone: "+15551234567" })).rejects.toThrow();
     });
   });
 
   describe("cancel booking", () => {
-    it("cancels an existing booking by phone", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
-      store.updateDraft("+15551234567", "name", "John");
-      const booking = store.createBooking({ callerPhone: "+15551234567" });
-      const result = store.cancelBooking("+15551234567");
+    it("cancels an existing booking by phone", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
+      await store.updateDraft("+15551234567", "name", "John");
+      await store.createBooking({ callerPhone: "+15551234567" });
+      const result = await store.cancelBooking("+15551234567");
       expect(result.cancelled).toBe(true);
       expect(result.date).toBe("2026-11-16");
     });
 
-    it("returns not found for a caller with no booking", () => {
-      const result = store.cancelBooking("+19998887777");
+    it("returns not found for a caller with no booking", async () => {
+      const result = await store.cancelBooking("+19998887777");
       expect(result.cancelled).toBe(false);
       expect(result.reason).toContain("no booking");
     });
   });
 
   describe("draft status", () => {
-    it("returns next_step and missing_fields for a partial draft", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      const status = store.getDraftStatus("+15551234567");
+    it("returns next_step and missing_fields for a partial draft", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      const status = await store.getDraftStatus("+15551234567");
       expect(status.nextStep).toBe("ask_preferred_date");
       expect(status.missingFields).toContain("preferredDate");
       expect(status.missingFields).toContain("slot");
       expect(status.missingFields).toContain("name");
     });
 
-    it("returns next_step=search_slots when date is set", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      store.updateDraft("+15551234567", "preferredDate", "2026-11-16");
-      const status = store.getDraftStatus("+15551234567");
+    it("returns next_step=search_slots when date is set", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await store.updateDraft("+15551234567", "preferredDate", "2026-11-16");
+      const status = await store.getDraftStatus("+15551234567");
       expect(status.nextStep).toBe("search_slots");
       expect(status.missingFields).toContain("slot");
     });
 
-    it("returns next_step=ask_name when slot is set", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      store.updateDraft("+15551234567", "preferredDate", "2026-11-16");
-      store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
-      const status = store.getDraftStatus("+15551234567");
+    it("returns next_step=ask_name when slot is set", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await store.updateDraft("+15551234567", "preferredDate", "2026-11-16");
+      await store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
+      const status = await store.getDraftStatus("+15551234567");
       expect(status.nextStep).toBe("ask_name");
       expect(status.missingFields).toContain("name");
     });
 
-    it("returns next_step=book when all fields are set", () => {
-      store.updateDraft("+15551234567", "reason", "cleaning");
-      store.updateDraft("+15551234567", "preferredDate", "2026-11-16");
-      store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
-      store.updateDraft("+15551234567", "name", "John");
-      const status = store.getDraftStatus("+15551234567");
+    it("returns next_step=book when all fields are set", async () => {
+      await store.updateDraft("+15551234567", "reason", "cleaning");
+      await store.updateDraft("+15551234567", "preferredDate", "2026-11-16");
+      await store.updateDraft("+15551234567", "slot", { date: "2026-11-16", time: "09:00", dentist: "Dr. Lee" });
+      await store.updateDraft("+15551234567", "name", "John");
+      const status = await store.getDraftStatus("+15551234567");
       expect(status.nextStep).toBe("book");
       expect(status.missingFields).toEqual([]);
     });
 
-    it("returns next_step=ask_reason for a new caller", () => {
-      const status = store.getDraftStatus("+15551234567");
+    it("returns next_step=ask_reason for a new caller", async () => {
+      const status = await store.getDraftStatus("+15551234567");
       expect(status.nextStep).toBe("ask_reason");
       expect(status.missingFields).toContain("reason");
     });

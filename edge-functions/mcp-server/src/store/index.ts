@@ -1,3 +1,5 @@
+import type { BookingActorStub } from "../actor.js";
+
 export interface Slot {
   date: string;
   time: string;
@@ -73,6 +75,29 @@ export class Store {
   private drafts: Map<string, BookingDraft> = new Map();
   private bookingCounter = 0;
   private initialized = false;
+
+  /**
+   * Optional per-request actor backend. When set, draft and booking
+   * operations proxy to the BookingActor stub keyed by the Telnyx
+   * conversation id. When unset (tests, no env binding), the in-memory
+   * Maps below are used.
+   */
+  private actor: BookingActorStub | null = null;
+  private conversationKey: string | null = null;
+
+  /**
+   * Route draft and booking operations through a per-conversation
+   * `BookingActor` stub. Called once per request in production, after
+   * the MCP request's `_meta.telnyx_conversation_id` is extracted.
+   */
+  setActorBackend(stub: BookingActorStub, conversationId: string): void {
+    this.actor = stub;
+    this.conversationKey = conversationId;
+  }
+
+  private hasActor(): boolean {
+    return this.actor !== null && this.conversationKey !== null;
+  }
 
   private businessInfo: BusinessInfo = {
     name: "Bright Smile Dental",
@@ -160,17 +185,35 @@ export class Store {
     return this.services;
   }
 
-  checkAvailability(date: string, now: Date = new Date()): Slot[] {
+  /**
+   * Replace the static clinic config (business info + services) with
+   * values loaded and cached elsewhere. Used to seed per-request Store
+   * instances without re-reading KV on every call. Safe to call any
+   * time; `initFromKv` overrides if it runs later against a real KV.
+   */
+  setStaticData(businessInfo: BusinessInfo, services: Service[]): void {
+    this.businessInfo = businessInfo;
+    this.services = services;
+    this.initialized = true;
+  }
+
+  async checkAvailability(date: string, now: Date = new Date()): Promise<Slot[]> {
     const day = new Date(date + "T00:00:00");
     const dow = day.getDay();
     if (dow === 0) return [];
 
     const dentists = ["Dr. Lee", "Dr. Patel"];
-    const booked = new Set(
-      [...this.appointments.values()]
-        .filter((b) => b.slot.date === date)
-        .map((b) => b.slot.time)
-    );
+    let bookedTimes = new Set<string>();
+    if (this.hasActor()) {
+      const bookedSlot = await this.actor!.getBookedSlotForDate(date);
+      if (bookedSlot) bookedTimes.add(bookedSlot.time);
+    } else {
+      bookedTimes = new Set(
+        [...this.appointments.values()]
+          .filter((b) => b.slot.date === date)
+          .map((b) => b.slot.time)
+      );
+    }
 
     const today = now.toISOString().slice(0, 10);
     const currentHourMin =
@@ -179,7 +222,7 @@ export class Store {
 
     const slots: Slot[] = [];
     for (const time of this.timeSlots) {
-      if (booked.has(time)) continue;
+      if (bookedTimes.has(time)) continue;
       if (dow === 6 && parseInt(time) >= 15) continue;
       if (isToday) {
         const [h, m] = time.split(":").map(Number);
@@ -192,15 +235,19 @@ export class Store {
     return slots;
   }
 
-  getDraft(callerPhone: string): BookingDraft | null {
+  async getDraft(callerPhone: string): Promise<BookingDraft | null> {
+    if (this.hasActor()) return this.actor!.getDraft();
     return this.drafts.get(callerPhone) ?? null;
   }
 
-  updateDraft(
+  async updateDraft(
     callerPhone: string,
     field: keyof BookingDraft,
     value: string | Slot | null
-  ): BookingDraft {
+  ): Promise<BookingDraft> {
+    if (this.hasActor()) {
+      return this.actor!.updateDraft(field, value);
+    }
     const draft = this.drafts.get(callerPhone) ?? {
       reason: null,
       preferredDate: null,
@@ -212,7 +259,8 @@ export class Store {
     return draft;
   }
 
-  getDraftStatus(callerPhone: string): DraftStatus {
+  async getDraftStatus(callerPhone: string): Promise<DraftStatus> {
+    if (this.hasActor()) return this.actor!.getDraftStatus();
     const draft = this.drafts.get(callerPhone);
     if (!draft) {
       return {
@@ -231,12 +279,21 @@ export class Store {
     return { nextStep, missingFields: missing };
   }
 
-  createBooking(args: {
+  async createBooking(args: {
     callerPhone: string;
     name?: string;
     slot?: Slot;
     reason?: string;
-  }): Booking & { date: string; time: string; dentist: string } {
+  }): Promise<Booking & { date: string; time: string; dentist: string }> {
+    if (this.hasActor()) {
+      return this.actor!.createBooking({
+        callerPhone: args.callerPhone,
+        name: args.name,
+        slot: args.slot,
+        reason: args.reason,
+      });
+    }
+
     const draft = this.drafts.get(args.callerPhone);
     const name = args.name ?? draft?.name;
     const slot = args.slot ?? draft?.slot;
@@ -261,9 +318,10 @@ export class Store {
     return { ...booking, date: slot.date, time: slot.time, dentist: slot.dentist };
   }
 
-  cancelBooking(
+  async cancelBooking(
     callerPhone: string
-  ): { cancelled: boolean; date?: string; reason?: string } {
+  ): Promise<{ cancelled: boolean; date?: string; reason?: string }> {
+    if (this.hasActor()) return this.actor!.cancelBooking();
     const booking = this.appointments.get(callerPhone);
     if (!booking) {
       return { cancelled: false, reason: "no booking found for this number" };

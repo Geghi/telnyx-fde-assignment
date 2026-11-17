@@ -2,6 +2,10 @@ name = "mcp-server"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
+[[actors]]
+binding = "BOOKING"
+type = "BookingActor"
+
 [storage.kv.CLINIC_KV]
 id = "82be9f48-ca78-43f7-a50a-c0109d536465"
 
