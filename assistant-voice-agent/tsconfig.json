@@ -8,6 +8,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "eval/**/*.ts", "setup.ts", "chat.ts", "trace.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "eval/**/*.ts", "setup.ts", "buy-number.ts", "chat.ts", "trace.ts"],
   "exclude": ["node_modules"]
 }

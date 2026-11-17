@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "setup": "tsx setup.ts",
+    "buy-number": "tsx buy-number.ts",
     "chat": "tsx chat.ts",
     "trace": "tsx trace.ts",
     "eval": "tsx eval/runner.ts",
