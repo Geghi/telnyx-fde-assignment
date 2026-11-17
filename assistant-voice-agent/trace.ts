@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { latestConversationId } from "./src/latest-conversation.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -26,19 +27,30 @@ function loadEnvFile() {
 }
 loadEnvFile();
 
-const CONVERSATION_ID = process.argv[2];
 const API_KEY = process.env.TELNYX_API_KEY;
 const API_BASE = "https://api.telnyx.com/v2";
 
-if (!CONVERSATION_ID) {
-  console.error("Usage: npm run trace <conversation_id>");
-  console.error("Example: npm run trace 5d72fb92-d719-4c51-992f-820beb1484ed");
-  process.exit(1);
-}
 if (!API_KEY) {
   console.error("Missing TELNYX_API_KEY in .env.local");
   process.exit(1);
 }
+
+/** No id given: trace the newest conversation of ASSISTANT_ID (or of the account). */
+async function findLatestConversation(): Promise<string> {
+  const assistantId = process.env.ASSISTANT_ID;
+  const filter = assistantId ? `&metadata-%3Eassistant_id=eq.${encodeURIComponent(assistantId)}` : "";
+  const res = await fetch(`${API_BASE}/ai/conversations?page%5Bsize%5D=20${filter}`, {
+    headers: { Authorization: `Bearer ${API_KEY}` },
+  });
+  const id = latestConversationId((await res.json()).data ?? []);
+  if (!res.ok || !id) {
+    console.error(`No conversation found (HTTP ${res.status}).`);
+    process.exit(1);
+  }
+  return id;
+}
+
+const CONVERSATION_ID = process.argv[2] ?? (await findLatestConversation());
 
 const res = await fetch(
   `${API_BASE}/ai/conversations/${CONVERSATION_ID}/messages?page%5Bsize%5D=100`,
