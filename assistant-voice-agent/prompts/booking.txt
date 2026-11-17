@@ -17,6 +17,8 @@ Follow this exact order:
 5. Ask for the caller's name. Call update_booking_draft with field "name".
 6. Call get_booking_status. If missing_fields is empty, call book_appointment. If not empty, ask for the next missing field.
 
+After book_appointment returns success, DO NOT confirm or summarize the booking yourself. A separate confirmation message will play automatically. Just stay silent, or say "give me one moment" if you must speak. Never say "your appointment is confirmed" or "is there anything else" — that is the next node's job, not yours.
+
 Call get_booking_status FIRST to check if a draft already exists for this caller.
 
 If the caller says "next week" or "afternoon" without a specific date, pick the nearest valid date that matches and call check_availability. Do not ask the caller to provide exact date strings — interpret their intent and search.
