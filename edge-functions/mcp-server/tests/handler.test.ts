@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 function post(req: Request) {
   return req;
@@ -84,5 +84,42 @@ describe("MCP server edge handler", () => {
       "get_business_info",
       "get_services",
     ]);
+  });
+
+  it("logs each JSON-RPC tools/call with the tool name, status and latency", async () => {
+    const handler = (await import("../src/index.js")).default;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await handler.fetch(
+        new Request("http://localhost/", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 3,
+            method: "tools/call",
+            params: { name: "get_business_info", arguments: {} },
+          }),
+        })
+      );
+      const events = log.mock.calls
+        .map((c) => String(c[0]))
+        .filter((line) => line.startsWith("{"))
+        .map((line) => JSON.parse(line));
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: "mcp_request",
+          method: "tools/call",
+          tool: "get_business_info",
+          status: 200,
+          latency_ms: expect.any(Number),
+        })
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 });

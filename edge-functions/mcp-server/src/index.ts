@@ -83,6 +83,14 @@ function buildStore(env: Env, caller: string | null): Store {
   return store;
 }
 
+/** Best-effort read of the JSON-RPC method and tool name, for logging only. */
+async function describeRpc(req: Request): Promise<{ method?: string; tool?: string }> {
+  const rpc = (await req.clone().json().catch(() => null)) as
+    | { method?: string; params?: { name?: string } }
+    | null;
+  return { method: rpc?.method, tool: rpc?.params?.name };
+}
+
 async function handleToolRoute(req: Request, name: string, env: Env): Promise<Response> {
   if (req.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -97,6 +105,7 @@ async function handleToolRoute(req: Request, name: string, env: Env): Promise<Re
     return Response.json({ error: "Body must be JSON" }, { status: 400 });
   }
   const caller = callerKey(body?.caller_phone);
+  const start = Date.now();
   let res: Response;
   try {
     res = await runTool(name, body ?? {}, {
@@ -106,10 +115,12 @@ async function handleToolRoute(req: Request, name: string, env: Env): Promise<Re
       onlineBookingEnabled: () => onlineBookingEnabled(env),
     });
   } catch (err) {
-    console.error(JSON.stringify({ event: "tool_error", tool: name, caller, error: String(err) }));
+    console.error(
+      JSON.stringify({ event: "tool_error", tool: name, caller, error: String(err), latency_ms: Date.now() - start })
+    );
     return Response.json({ error: "Internal error, please try again" }, { status: 500 });
   }
-  console.log(JSON.stringify({ event: "tool_call", tool: name, caller, status: res.status }));
+  console.log(JSON.stringify({ event: "tool_call", tool: name, caller, status: res.status, latency_ms: Date.now() - start }));
   return res;
 }
 
@@ -139,6 +150,8 @@ export default {
     }
 
     if (req.method === "POST" || req.method === "GET" || req.method === "DELETE") {
+      const start = Date.now();
+      const rpc = req.method === "POST" ? await describeRpc(req) : {};
       await getCachedStaticConfig(env ?? {});
       const store = buildStore(env ?? {}, null);
       const transport = new WebStandardStreamableHTTPServerTransport({
@@ -148,9 +161,13 @@ export default {
       const mcpServer = createMcpServer(store);
       await mcpServer.connect(transport);
       try {
-        return await transport.handleRequest(req);
+        const res = await transport.handleRequest(req);
+        console.log(JSON.stringify({ event: "mcp_request", ...rpc, status: res.status, latency_ms: Date.now() - start }));
+        return res;
       } catch (err) {
-        console.error("MCP request error:", err);
+        console.error(
+          JSON.stringify({ event: "mcp_error", ...rpc, error: String(err), latency_ms: Date.now() - start })
+        );
         return Response.json(
           { error: "Internal server error" },
           { status: 500 }

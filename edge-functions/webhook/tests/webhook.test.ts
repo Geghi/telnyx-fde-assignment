@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { Env } from "../src/types.js";
 
 function createMockEnv(kvData: Record<string, string> = {}): Env {
@@ -232,5 +232,77 @@ describe("handleWebhook", () => {
       expect(validKey.test(key), `key "${key}" contains invalid chars for KV`).toBe(true);
       expect(key.includes(":"), `key "${key}" contains a colon`).toBe(false);
     }
+  });
+
+  describe("observability", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    function initRequest() {
+      return new Request("http://localhost/", {
+        method: "POST",
+        body: JSON.stringify({
+          data: {
+            event_type: "assistant.initialization",
+            payload: {
+              telnyx_conversation_channel: "phone_call",
+              telnyx_agent_target: "+13128675309",
+              telnyx_end_user_target: "+15551234567",
+              call_control_id: "v3:test123",
+              assistant_id: "assistant_test",
+            },
+          },
+        }),
+      });
+    }
+
+    function loggedEvents(spy: { mock: { calls: unknown[][] } }) {
+      return spy.mock.calls.map((c) => JSON.parse(String(c[0])));
+    }
+
+    it("increments the global webhook_calls counter read by /metrics", async () => {
+      const { handleWebhook } = await import("../src/handlers/webhook.js");
+      const env = createMockEnv({ online_booking_enabled: "true" });
+
+      await handleWebhook(initRequest(), env);
+      await handleWebhook(initRequest(), env);
+
+      expect(await env.CLINIC_KV.get("webhook_calls")).toBe("2");
+    });
+
+    it("logs the call_control_id on success so a call can be traced", async () => {
+      const { handleWebhook } = await import("../src/handlers/webhook.js");
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await handleWebhook(initRequest(), createMockEnv());
+
+      expect(loggedEvents(log)[0]).toMatchObject({ outcome: "ok", call_control_id: "v3:test123" });
+    });
+
+    it("logs an invalid payload as a structured error line", async () => {
+      const { handleWebhook } = await import("../src/handlers/webhook.js");
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await handleWebhook(new Request("http://localhost/", { method: "POST", body: "not json" }), createMockEnv());
+
+      expect(loggedEvents(error)[0]).toMatchObject({ outcome: "invalid_payload" });
+    });
+
+    it("logs and counts an actor failure, then rethrows the same error", async () => {
+      const { handleWebhook } = await import("../src/handlers/webhook.js");
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const env = createMockEnv();
+      const boom = new Error("actor unavailable");
+      (env as unknown as { CALL_SESSION: unknown }).CALL_SESSION = {
+        idFromName: () => ({ ...createMockActor(), getOrCreate: async () => { throw boom; } }),
+      };
+
+      await expect(handleWebhook(initRequest(), env)).rejects.toBe(boom);
+      expect(await env.CLINIC_KV.get("webhook_errors")).toBe("1");
+      expect(loggedEvents(error)[0]).toMatchObject({
+        outcome: "error",
+        caller: "+15551234567",
+        error: "Error: actor unavailable",
+      });
+    });
   });
 });

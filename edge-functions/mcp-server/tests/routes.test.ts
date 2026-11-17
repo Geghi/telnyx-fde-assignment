@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { BookingActor } from "../src/actor.js";
 
 type Binding = { idFromName(name: string): unknown; keys: string[] };
@@ -214,6 +214,25 @@ describe("webhook tool routes (POST /tools/<name>)", () => {
     const { status, json } = await callRoute("get_booking_status", { caller_phone: PHONE }, { BOOKING: broken });
     expect(status).toBe(500);
     expect(JSON.stringify(json)).not.toContain("secret detail");
+  });
+
+  it("logs each tool route call with caller, status and latency", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await callRoute("get_booking_status", { caller_phone: PHONE });
+      const events = log.mock.calls.map((c) => JSON.parse(String(c[0])));
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: "tool_call",
+          tool: "get_booking_status",
+          caller: PHONE,
+          status: 200,
+          latency_ms: expect.any(Number),
+        })
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("returns 404 for an unknown tool", async () => {
