@@ -8,7 +8,7 @@ export function createMcpServer(store: Store): McpServer {
     { name: "bright-smile-dental", version: "1.0.0" },
     {
       instructions:
-        "MCP server for Bright Smile Dental. Provides scheduling tools: check availability, book/cancel appointments, get services and business info, and manage booking drafts with progressive status.",
+        "MCP server for Bright Smile Dental. Read-only clinic data: business info, services and appointment availability. Booking writes are separate webhook tools scoped to the Booking and Cancellation nodes.",
     }
   );
 
@@ -79,121 +79,6 @@ export function createMcpServer(store: Store): McpServer {
               slots.length === 0
                 ? "No available slots found. The clinic may be closed on that date, or all remaining slots today are in the past."
                 : JSON.stringify(slots, null, 2),
-          },
-        ],
-      };
-    }
-  );
-
-  server.tool(
-    "update_booking_draft",
-    "Saves a piece of booking information as the caller provides it. Returns the current draft and a status object with next_step and missing_fields. Caller can update any field at any time to correct it. The caller_phone is passed automatically as a dynamic variable.",
-    {
-      caller_phone: z
-        .string()
-        .describe("The caller's phone number (E.164 format, e.g. +15551234567)"),
-      field: z
-        .enum(["reason", "preferredDate", "slot", "name"])
-        .describe("The draft field to update"),
-      value: z
-        .union([z.string(), z.object({
-          date: z.string(),
-          time: z.string(),
-          dentist: z.string(),
-        })])
-        .describe("The value for the field. For 'slot', pass an object with date, time, and dentist."),
-    },
-    async (args) => {
-      const draft = await store.updateDraft(
-        args.caller_phone,
-        args.field as "reason" | "preferredDate" | "slot" | "name",
-        args.value as string | Slot | null
-      );
-      const status = await store.getDraftStatus(args.caller_phone);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ draft, status }, null, 2),
-          },
-        ],
-      };
-    }
-  );
-
-  server.tool(
-    "get_booking_status",
-    "Returns the current booking draft and its status (next_step and missing_fields) for a caller. Use this first to check if a returning caller has an in-progress draft.",
-    {
-      caller_phone: z
-        .string()
-        .describe("The caller's phone number (E.164 format)"),
-    },
-    async (args) => {
-      const draft = await store.getDraft(args.caller_phone);
-      const status = await store.getDraftStatus(args.caller_phone);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ draft, status }, null, 2),
-          },
-        ],
-      };
-    }
-  );
-
-  server.tool(
-    "book_appointment",
-    "Creates a confirmed booking from the caller's draft. All draft fields must be filled (reason, preferredDate, slot, name). The caller_phone identifies which draft to use. Returns a booking confirmation with booking ID, date, time, and dentist.",
-    {
-      caller_phone: z
-        .string()
-        .describe("The caller's phone number (E.164 format)"),
-    },
-    async (args) => {
-      try {
-        const booking = await store.createBooking({ callerPhone: args.caller_phone });
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(booking, null, 2),
-            },
-          ],
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Error: ${(err as Error).message}`,
-            },
-          ],
-        };
-      }
-    }
-  );
-
-  server.tool(
-    "cancel_appointment",
-    "Cancels an existing appointment by the caller's phone number. Returns cancellation confirmation or 'no booking found' if none exists.",
-    {
-      caller_phone: z
-        .string()
-        .describe("The caller's phone number (E.164 format)"),
-      booking_id: z
-        .string()
-        .optional()
-        .describe("Optional booking ID to cancel a specific booking"),
-    },
-    async (args) => {
-      const result = await store.cancelBooking(args.caller_phone);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(result, null, 2),
           },
         ],
       };

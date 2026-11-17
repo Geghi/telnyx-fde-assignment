@@ -2,6 +2,7 @@ import { StatefulActor } from "@telnyx/edge-runtime";
 import type {
   Booking,
   BookingDraft,
+  CallbackRequest,
   DraftStatus,
   Slot,
 } from "./store/index.js";
@@ -24,26 +25,38 @@ export interface BookingActorState {
   draft: BookingDraft | null;
   booking: Booking | null;
   bookingCounter: number;
+  request: CallbackRequest | null;
+  requestCounter: number;
+  /** Only used on the clinic-wide `clinic:callbacks` instance: the staff call-back list. */
+  callbacks: CallbackRequest[];
+}
+
+export interface CancelResult {
+  cancelled: boolean;
+  kind?: "booking" | "request";
+  date?: string;
+  reason?: string;
 }
 
 function freshState(): BookingActorState {
-  return { draft: null, booking: null, bookingCounter: 0 };
+  return { draft: null, booking: null, bookingCounter: 0, request: null, requestCounter: 0, callbacks: [] };
 }
 
 /**
  * StatefulActor that owns the booking draft and confirmed booking for one
- * Telnyx conversation. Keyed by `telnyx_conversation_id` so that successive MCP
- * tool calls in the same voice call share state even when Telnyx Edge Compute
- * routes them to different function instances.
+ * caller. Keyed `caller:<caller_phone>` so tool calls share state across
+ * function instances and across calls: a booking made on one call can be
+ * cancelled on the next.
  *
  * Read-modify-write safety on `updateDraft` is provided by the actor's
  * single-threaded execution model: parallel tool calls for the same
- * conversation are serialized here, so one update never clobbers another.
+ * caller are serialized here, so one update never clobbers another.
  */
 export class BookingActor extends StatefulActor {
   private async getState(): Promise<BookingActorState> {
     const s = await this.ctx.storage.get<BookingActorState>("state");
-    if (s) return s;
+    // Spread over defaults so state saved before a field existed still loads.
+    if (s) return { ...freshState(), ...s };
     const fresh = freshState();
     await this.ctx.storage.put("state", fresh);
     return fresh;
@@ -118,6 +131,7 @@ export class BookingActor extends StatefulActor {
     };
 
     await this.setState({
+      ...s,
       draft: null,
       booking,
       bookingCounter: s.bookingCounter + 1,
@@ -130,18 +144,61 @@ export class BookingActor extends StatefulActor {
     };
   }
 
-  async cancelBooking(): Promise<{
-    cancelled: boolean;
-    date?: string;
-    reason?: string;
-  }> {
+  /** Saves the draft as a call-back request (online booking disabled). The slot is optional. */
+  async saveRequest(callerPhone: string): Promise<CallbackRequest> {
     const s = await this.getState();
-    if (!s.booking) {
-      return { cancelled: false, reason: "no booking found for this number" };
+    const d = s.draft;
+    const missing = (["reason", "preferredDate", "name"] as const).filter((f) => !d?.[f]);
+    if (missing.length) {
+      throw new Error(`Missing required fields: ${missing.join(", ")}`);
     }
-    const date = s.booking.slot.date;
-    await this.setState({ ...s, booking: null });
-    return { cancelled: true, date };
+    const request: CallbackRequest = {
+      requestId: `RQ-${String(s.requestCounter + 1).padStart(4, "0")}`,
+      callerPhone,
+      name: d!.name!,
+      reason: d!.reason!,
+      preferredDate: d!.preferredDate!,
+      slot: d!.slot ?? null,
+      status: "callback_requested",
+      createdAt: new Date().toISOString(),
+    };
+    await this.setState({ ...s, draft: null, request, requestCounter: s.requestCounter + 1 });
+    return request;
+  }
+
+  async getAppointment(): Promise<{ booking: Booking | null; request: CallbackRequest | null }> {
+    const s = await this.getState();
+    return { booking: s.booking, request: s.request };
+  }
+
+  /** Cancels the confirmed booking if there is one, otherwise the pending request. */
+  async cancelBooking(): Promise<CancelResult> {
+    const s = await this.getState();
+    if (s.booking) {
+      await this.setState({ ...s, booking: null });
+      return { cancelled: true, kind: "booking", date: s.booking.slot.date };
+    }
+    if (s.request) {
+      await this.setState({ ...s, request: null });
+      return { cancelled: true, kind: "request", date: s.request.preferredDate };
+    }
+    return { cancelled: false, reason: "no booking found for this number" };
+  }
+
+  /** Clinic-wide queue: one entry per caller, a newer request replaces the older one. */
+  async addCallback(request: CallbackRequest): Promise<void> {
+    const s = await this.getState();
+    const callbacks = s.callbacks.filter((r) => r.callerPhone !== request.callerPhone);
+    await this.setState({ ...s, callbacks: [...callbacks, request] });
+  }
+
+  async removeCallback(callerPhone: string): Promise<void> {
+    const s = await this.getState();
+    await this.setState({ ...s, callbacks: s.callbacks.filter((r) => r.callerPhone !== callerPhone) });
+  }
+
+  async listCallbacks(): Promise<CallbackRequest[]> {
+    return (await this.getState()).callbacks;
   }
 
   /** Returns the current booking's slot if it falls on the given date. */
@@ -166,12 +223,25 @@ export interface BookingActorStub {
     slot?: Slot;
     reason?: string;
   }): Promise<Booking & { date: string; time: string; dentist: string }>;
-  cancelBooking(): Promise<{
-    cancelled: boolean;
-    date?: string;
-    reason?: string;
-  }>;
+  cancelBooking(): Promise<CancelResult>;
   getBookedSlotForDate(date: string): Promise<Slot | null>;
+  saveRequest(callerPhone: string): Promise<CallbackRequest>;
+  getAppointment(): Promise<{ booking: Booking | null; request: CallbackRequest | null }>;
+}
+
+/** The clinic-wide `clinic:callbacks` BookingActor instance, seen as a queue. */
+export interface CallbackQueueStub {
+  addCallback(request: CallbackRequest): Promise<void>;
+  removeCallback(callerPhone: string): Promise<void>;
+  listCallbacks(): Promise<CallbackRequest[]>;
+}
+
+export function createCallbackQueueStub(actor: any): CallbackQueueStub {
+  return {
+    addCallback: (r) => actor.addCallback(r),
+    removeCallback: (p) => actor.removeCallback(p),
+    listCallbacks: () => actor.listCallbacks(),
+  };
 }
 
 export function createBookingActorStub(actor: any): BookingActorStub {
@@ -182,5 +252,7 @@ export function createBookingActorStub(actor: any): BookingActorStub {
     createBooking: (args) => actor.createBooking(args),
     cancelBooking: () => actor.cancelBooking(),
     getBookedSlotForDate: (date) => actor.getBookedSlotForDate(date),
+    saveRequest: (callerPhone) => actor.saveRequest(callerPhone),
+    getAppointment: () => actor.getAppointment(),
   };
 }

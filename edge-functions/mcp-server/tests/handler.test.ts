@@ -56,7 +56,7 @@ describe("MCP server edge handler", () => {
     expect(body.result.protocolVersion).toBeDefined();
   });
 
-  it("lists exact 7 tools via tools/list", async () => {
+  it("lists only the 3 read tools via tools/list (writes are webhook tools)", async () => {
     const handler = (await import("../src/index.js")).default;
     const res = await handler.fetch(
       post(
@@ -77,16 +77,12 @@ describe("MCP server edge handler", () => {
     );
     expect(res.status).toBe(200);
     const body = JSON.parse(await res.text());
-    expect(body.result.tools.length).toBe(7);
+    expect(body.result.tools.length).toBe(3);
     const names = body.result.tools.map((t: { name: string }) => t.name).sort();
     expect(names).toEqual([
-      "book_appointment",
-      "cancel_appointment",
       "check_availability",
-      "get_booking_status",
       "get_business_info",
       "get_services",
-      "update_booking_draft",
     ]);
   });
 });

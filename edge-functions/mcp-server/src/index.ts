@@ -2,7 +2,9 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { Store } from "./store/index.js";
 import type { BusinessInfo, Service } from "./store/index.js";
 import { createMcpServer } from "./tools/index.js";
-import { createBookingActorStub } from "./actor.js";
+import { createBookingActorStub, createCallbackQueueStub } from "./actor.js";
+import type { CallbackQueueStub } from "./actor.js";
+import { callerKey, isToolName, runTool } from "./routes.js";
 
 // Re-export so esbuild keeps the class in the bundle. Telnyx Edge only
 // registers this function as the actor's owner if it sees the exported
@@ -17,6 +19,29 @@ interface EnvBookingBinding {
 interface Env {
   CLINIC_KV?: { get(key: string): Promise<string | null> };
   BOOKING?: EnvBookingBinding;
+  /** Bearer token for GET /callbacks (telnyx-edge secrets add STAFF_TOKEN …). Unset → endpoint disabled. */
+  STAFF_TOKEN?: string;
+}
+
+function callbackQueue(env: Env): CallbackQueueStub | null {
+  return env?.BOOKING ? createCallbackQueueStub(env.BOOKING.idFromName("clinic:callbacks")) : null;
+}
+
+/** Same flag and default as the webhook: missing or unreadable means enabled. */
+async function onlineBookingEnabled(env: Env): Promise<boolean> {
+  const value = await env?.CLINIC_KV?.get("online_booking_enabled").catch(() => null);
+  return value !== "false";
+}
+
+async function handleCallbacks(req: Request, env: Env): Promise<Response> {
+  // telnyx-edge secrets are documented as "environment variables"; accept the env binding or process.env.
+  const token = env?.STAFF_TOKEN ?? (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.STAFF_TOKEN;
+  const auth = req.headers.get("authorization");
+  if (!token || auth !== `Bearer ${token}`) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const queue = callbackQueue(env);
+  return Response.json(queue ? await queue.listCallbacks() : []);
 }
 
 let cachedBusinessInfo: BusinessInfo | null = null;
@@ -47,43 +72,45 @@ async function getCachedStaticConfig(env: Env): Promise<{
   return { businessInfo: cachedBusinessInfo, services: cachedServices };
 }
 
-/**
- * Extract the Telnyx conversation id from a JSON-RPC request body. Telnyx
- * injects `telnyx_conversation_id` into the `_meta` field of every MCP
- * request. The field can sit at the top level (initialize) or inside
- * `params._meta` (tools/call, tools/list, …).
- */
-async function extractConversationId(req: Request): Promise<string | null> {
-  try {
-    const peek = await req.clone().json();
-    const top = peek?._meta?.telnyx_conversation_id;
-    if (typeof top === "string" && top) return top;
-    const nested = peek?.params?._meta?.telnyx_conversation_id;
-    if (typeof nested === "string" && nested) return nested;
-  } catch {
-    // Not JSON or no _meta — fall through.
-  }
-  return null;
-}
-
-function buildStore(env: Env, conversationId: string | null): Store {
+function buildStore(env: Env, caller: string | null): Store {
   const store = new Store();
   if (cachedBusinessInfo && cachedServices) {
     store.setStaticData(cachedBusinessInfo, cachedServices);
   }
-  if (conversationId && env?.BOOKING) {
-    const raw = env.BOOKING.idFromName(`conv:${conversationId}`) as {
-      getDraft(): unknown;
-      updateDraft(...args: unknown[]): unknown;
-      getDraftStatus(): unknown;
-      createBooking(...args: unknown[]): unknown;
-      cancelBooking(): unknown;
-      getBookedSlotForDate(...args: unknown[]): unknown;
-    };
-    const stub = createBookingActorStub(raw);
-    store.setActorBackend(stub, conversationId);
+  if (caller && env?.BOOKING) {
+    store.setActorBackend(createBookingActorStub(env.BOOKING.idFromName(`caller:${caller}`)));
   }
   return store;
+}
+
+async function handleToolRoute(req: Request, name: string, env: Env): Promise<Response> {
+  if (req.method !== "POST") {
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
+  }
+  if (!isToolName(name)) {
+    return Response.json({ error: `Unknown tool: ${name}` }, { status: 404 });
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return Response.json({ error: "Body must be JSON" }, { status: 400 });
+  }
+  const caller = callerKey(body?.caller_phone);
+  let res: Response;
+  try {
+    res = await runTool(name, body ?? {}, {
+      store: buildStore(env, caller),
+      caller,
+      queue: callbackQueue(env),
+      onlineBookingEnabled: () => onlineBookingEnabled(env),
+    });
+  } catch (err) {
+    console.error(JSON.stringify({ event: "tool_error", tool: name, caller, error: String(err) }));
+    return Response.json({ error: "Internal error, please try again" }, { status: 500 });
+  }
+  console.log(JSON.stringify({ event: "tool_call", tool: name, caller, status: res.status }));
+  return res;
 }
 
 export default {
@@ -92,6 +119,14 @@ export default {
 
     if (url.pathname === "/health" || url.pathname.startsWith("/health/")) {
       return new Response("ok");
+    }
+
+    if (url.pathname === "/callbacks" && req.method === "GET") {
+      return handleCallbacks(req, env ?? {});
+    }
+
+    if (url.pathname.startsWith("/tools/")) {
+      return handleToolRoute(req, url.pathname.slice("/tools/".length), env ?? {});
     }
 
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/mcp")) {
@@ -105,8 +140,7 @@ export default {
 
     if (req.method === "POST" || req.method === "GET" || req.method === "DELETE") {
       await getCachedStaticConfig(env ?? {});
-      const conversationId = await extractConversationId(req);
-      const store = buildStore(env ?? {}, conversationId);
+      const store = buildStore(env ?? {}, null);
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,

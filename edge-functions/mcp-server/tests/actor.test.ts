@@ -37,6 +37,9 @@ describe("BookingActor", () => {
         draft: { reason: "cleaning", preferredDate: null, slot: null, name: null },
         booking: null,
         bookingCounter: 0,
+        request: null,
+        requestCounter: 0,
+        callbacks: [],
       };
       storage.set("state", state);
       const draft = await actor.getDraft();
@@ -256,6 +259,24 @@ describe("BookingActor", () => {
       await actor.cancelBooking();
       const slot = await actor.getBookedSlotForDate("2026-11-16");
       expect(slot).toBeNull();
+    });
+  });
+
+  describe("state saved before requests existed", () => {
+    it("loads with request fields defaulted, so queue and lookup keep working", async () => {
+      storage.set("state", { draft: null, booking: null, bookingCounter: 3 });
+      expect(await actor.getAppointment()).toEqual({ booking: null, request: null });
+      await actor.addCallback({
+        requestId: "RQ-0001",
+        callerPhone: "+1",
+        name: "A",
+        reason: "r",
+        preferredDate: "2026-12-03",
+        slot: null,
+        status: "callback_requested",
+        createdAt: "x",
+      });
+      expect((await actor.listCallbacks()).length).toBe(1);
     });
   });
 });

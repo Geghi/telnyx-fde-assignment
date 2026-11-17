@@ -1,4 +1,4 @@
-import type { BookingActorStub } from "../actor.js";
+import type { BookingActorStub, CancelResult } from "../actor.js";
 
 export interface Slot {
   date: string;
@@ -34,6 +34,17 @@ export interface Booking {
   slot: Slot;
   reason: string;
   confirmed: boolean;
+}
+
+export interface CallbackRequest {
+  requestId: string;
+  callerPhone: string;
+  name: string;
+  reason: string;
+  preferredDate: string;
+  slot: Slot | null;
+  status: "callback_requested";
+  createdAt: string;
 }
 
 export interface DraftStatus {
@@ -78,25 +89,18 @@ export class Store {
 
   /**
    * Optional per-request actor backend. When set, draft and booking
-   * operations proxy to the BookingActor stub keyed by the Telnyx
-   * conversation id. When unset (tests, no env binding), the in-memory
-   * Maps below are used.
+   * operations proxy to the caller's BookingActor stub. When unset
+   * (tests, no env binding), the in-memory Maps below are used.
    */
   private actor: BookingActorStub | null = null;
-  private conversationKey: string | null = null;
 
-  /**
-   * Route draft and booking operations through a per-conversation
-   * `BookingActor` stub. Called once per request in production, after
-   * the MCP request's `_meta.telnyx_conversation_id` is extracted.
-   */
-  setActorBackend(stub: BookingActorStub, conversationId: string): void {
+  /** Route draft and booking operations through the caller's `BookingActor` stub. */
+  setActorBackend(stub: BookingActorStub): void {
     this.actor = stub;
-    this.conversationKey = conversationId;
   }
 
   private hasActor(): boolean {
-    return this.actor !== null && this.conversationKey !== null;
+    return this.actor !== null;
   }
 
   private businessInfo: BusinessInfo = {
@@ -227,7 +231,7 @@ export class Store {
       if (isToday) {
         const [h, m] = time.split(":").map(Number);
         const slotMinutes = h * 60 + m;
-        if (slotMinutes <= currentHourMin) continue;
+        if (slotMinutes <= currentHourMin + 60) continue;
       }
       const dentist = dentists[slots.length % dentists.length];
       slots.push({ date, time, dentist });
@@ -318,16 +322,28 @@ export class Store {
     return { ...booking, date: slot.date, time: slot.time, dentist: slot.dentist };
   }
 
-  async cancelBooking(
-    callerPhone: string
-  ): Promise<{ cancelled: boolean; date?: string; reason?: string }> {
+  async cancelBooking(callerPhone: string): Promise<CancelResult> {
     if (this.hasActor()) return this.actor!.cancelBooking();
     const booking = this.appointments.get(callerPhone);
     if (!booking) {
       return { cancelled: false, reason: "no booking found for this number" };
     }
     this.appointments.delete(callerPhone);
-    return { cancelled: true, date: booking.slot.date };
+    return { cancelled: true, kind: "booking", date: booking.slot.date };
+  }
+
+  // Call-back requests and lookups exist only on the actor backend.
+  async saveRequest(callerPhone: string): Promise<CallbackRequest> {
+    return this.requireActor().saveRequest(callerPhone);
+  }
+
+  async getAppointment(): Promise<{ booking: Booking | null; request: CallbackRequest | null }> {
+    return this.requireActor().getAppointment();
+  }
+
+  private requireActor(): BookingActorStub {
+    if (!this.actor) throw new Error("This operation needs the BOOKING actor binding");
+    return this.actor;
   }
 }
 
