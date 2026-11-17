@@ -41,7 +41,7 @@ if (!API_KEY) {
 }
 
 const res = await fetch(
-  `${API_BASE}/ai/conversations/${CONVERSATION_ID}/messages`,
+  `${API_BASE}/ai/conversations/${CONVERSATION_ID}/messages?page%5Bsize%5D=100`,
   { headers: { Authorization: `Bearer ${API_KEY}` } }
 );
 const text = await res.text();
@@ -53,7 +53,19 @@ if (!res.ok) {
 const body = JSON.parse(text);
 const messages = body.data ?? [];
 
+const metaRes = await fetch(
+  `${API_BASE}/ai/conversations/${CONVERSATION_ID}`,
+  { headers: { Authorization: `Bearer ${API_KEY}` } }
+);
+const metaBody = await metaRes.json();
+const meta = (metaBody.data ?? {}).metadata ?? {};
+
 console.log(`Conversation: ${CONVERSATION_ID}`);
+console.log(`Channel: ${meta.telnyx_conversation_channel ?? "unknown"}`);
+if (Array.isArray(meta.flow_transitions) && meta.flow_transitions.length > 0) {
+  console.log(`Flow transitions:`);
+  for (const t of meta.flow_transitions) console.log(`  ${t}`);
+}
 console.log(`${messages.length} messages\n`);
 console.log("=".repeat(70));
 
