@@ -212,3 +212,19 @@ Chronological log of every bug we hit and how we fixed it, so we can look back a
 **Verification:** Seeded KV with `KV-DRIVEN Clinic / Tue-Sun 10am-3pm / one service "KV Service @123"`. Cold-start of the MCP server returned that exact data from `get_business_info` and `get_services`. Then re-seeded with the real clinic config; new isolates pick it up.
 
 **Lesson:** When two services share data, put it once in the shared KV namespace and have both read it with a hardcoded fallback. One seed, one mutation point. Don't duplicate constants across services.
+
+## 21. StatefulActor tree-shaken out of bundle → actor has no owner (HTTP 500 `did not find address for actor`)
+
+**Symptom:** After shipping the MCP server with a new `BookingActor` (`[[actors]]` binding in `telnyx.toml`), every tool call that carried `_meta.telnyx_conversation_id` returned `500: failed to lookup actor: api error: code = FailedPrecondition desc = did not find address for actor '...__BookingActor/conv:...'`. `telnyx-edge actors list` showed `BookingActor  registered  -` (no owner function), while `CallSession` showed `ready` with the webhook's function id.
+
+**Root cause:** `index.ts` imported `createBookingActorStub` from `actor.ts` but never imported the `BookingActor` class itself. The MCP server's `package.json` sets `@telnyx/edge-runtime` to `sideEffects: false` (the fix for bug #1 — the SDK's JSDoc contains a realistic UUID that trips Telnyx's secret scanner). With `sideEffects: false`, esbuild tree-shakes any export that isn't imported anywhere. `BookingActor` was never imported, so it was dropped from the bundle. Telnyx Edge only registers the shipping function as an actor type's owner when it sees the exported class in the bundle — without it, the actor type stays `registered` with no owner, and `idFromName(...)` returns a stub that can't resolve to a live actor.
+
+**Fix:** Re-export the class from `index.ts`:
+```ts
+export { BookingActor } from "./actor.js";
+```
+This forces esbuild to keep `BookingActor` in the bundle. Re-shipping printed the expected warning (`Actor type "BookingActor" has no owner … Shipping makes "mcp-server" its owner`), `actors list` showed `BookingActor  ready  5d976a49-…` (the mcp-server function id), and a state-persistence probe across two calls with the same `telnyx_conversation_id` confirmed the draft survives.
+
+The webhook's `index.ts` already had `export { CallSession } from "./actor/call-session.js";` — that's why `CallSession` shipped fine and `BookingActor` didn't.
+
+**Lesson:** With `sideEffects: false`, an exported class is tree-shaken unless something actually imports it. For Telnyx StatefulActors, the entrypoint must re-export the class so the platform can see it and wire the function as its owner. `actors list` is the fast check: `registered` with `-` owner means the class never made it into the bundle.

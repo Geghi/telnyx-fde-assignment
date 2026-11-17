@@ -4,6 +4,12 @@ import type { BusinessInfo, Service } from "./store/index.js";
 import { createMcpServer } from "./tools/index.js";
 import { createBookingActorStub } from "./actor.js";
 
+// Re-export so esbuild keeps the class in the bundle. Telnyx Edge only
+// registers this function as the actor's owner if it sees the exported
+// `BookingActor` class in the shipped bundle — with `sideEffects: false`
+// (needed to pass the secret scanner) an unused export gets tree-shaken.
+export { BookingActor } from "./actor.js";
+
 interface EnvBookingBinding {
   idFromName(name: string): unknown;
 }

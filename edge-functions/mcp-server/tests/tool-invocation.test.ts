@@ -38,8 +38,9 @@ function createFakeBookingBinding(): { idFromName(name: string): unknown } {
             storage.set(k, v);
           },
         };
-        a = Object.create(BookingActor.prototype);
-        Object.assign(a, { ctx: { storage: fakeStorage } });
+        const actor = Object.create(BookingActor.prototype) as object;
+        Object.assign(actor, { ctx: { storage: fakeStorage } });
+        a = actor;
         actors.set(name, a);
       }
       return a;
