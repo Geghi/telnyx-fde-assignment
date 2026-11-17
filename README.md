@@ -20,6 +20,20 @@ Things to say:
 - "What appointment do I have?" then "Cancel it." (lookup and cancel)
 - "I need to talk to a person." (escalation)
 
+## Demo script
+
+On screen: the Portal test window for the assistant and a terminal in `assistant-voice-agent/`.
+
+1. **Booking (3 min).** Call from the Portal. Ask "What are your hours?": Sarah answers from the MCP server (`get_business_info`). Then "I'd like to book a cleaning for Thursday": the Booking node saves each answer to the draft, checks availability, books, and the Confirmation node reads back the real date, time and dentist.
+2. **Returning caller (1.5 min).** Call again and ask "What appointment do I have?": the booking made on the first call comes back from the per-caller BookingActor.
+3. **Feature flag (2 min).** Turn online booking off without a redeploy:
+   ```bash
+   telnyx-edge storage kv key put 82be9f48-ca78-43f7-a50a-c0109d536465 online_booking_enabled false
+   ```
+   Call and try to book: the variable-comparison edge sends the call to Booking request, Sarah saves a call-back request, and the speak node promises a call back verbatim. `./scripts/list-callbacks.sh` shows the request. Turn the flag back to `true`.
+4. **Cancel (1.5 min).** Call and say "I want to cancel my appointment": Sarah looks it up, reads it back, asks "Shall I cancel it?", and cancels only after the caller says yes.
+5. **Trace (1.5 min).** `npm run trace` on the last call: the workflow nodes that fired, in order, and every tool call with its result.
+
 ## Architecture
 
 ```
